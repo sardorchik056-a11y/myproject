@@ -420,6 +420,7 @@ async def handle_text_bet_command(message: Message, betting_game: BettingGame):
     if not parsed:
         await message.answer(
             "❌ <b>Неверный формат команды!</b>\n\n"
+            "<blockquote>"
             "📝 <b>Примеры команд:</b>\n\n"
             "<b>⚽ Футбол:</b>\n"
             "<code>фут гол 5</code>\n"
@@ -443,7 +444,8 @@ async def handle_text_bet_command(message: Message, betting_game: BettingGame):
             "<code>боулинг победа 10</code>\n"
             "<code>боулинг поражение 15</code>\n"
             "<code>боулинг страйк 50</code>\n\n"                                    
-            "🌐 Команды работают на русском и английском!",            
+            "🌐 Команды работают на русском и английском!"            
+            "</blockquote>",
             parse_mode='HTML'
         )
         return
