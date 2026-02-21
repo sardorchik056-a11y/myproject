@@ -52,7 +52,7 @@ RENDER_URL = os.getenv('RENDER_EXTERNAL_URL')
 if RENDER_URL:
     WEBHOOK_URL = f"{RENDER_URL}{WEBHOOK_PATH}"
 else:
-    WEBHOOK_URL = f"https://festery.onrender.com{WEBHOOK_PATH}"
+    WEBHOOK_URL = f"https://myproject-f34u.onrender.com{WEBHOOK_PATH}"
 
 # ID кастомных эмодзи (только оригинальные из проекта)
 EMOJI_WELCOME    = "5199885118214255386"
