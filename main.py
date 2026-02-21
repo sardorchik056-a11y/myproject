@@ -68,6 +68,11 @@ EMOJI_WALLET     = "5443127283898405358"
 EMOJI_STATS      = "5197288647275071607"
 EMOJI_WITHDRAWAL = "5445355530111437729"
 EMOJI_MINES      = "5307996024738395492"
+EMOJI_PROMO = "5444856076954520455"
+
+
+
+
 
 # Кастомные callback_data для игр
 GAME_CALLBACKS = {
@@ -170,7 +175,7 @@ def get_main_menu():
             InlineKeyboardButton(text="Лидеры", callback_data="leaders", icon_custom_emoji_id=EMOJI_LEADERS)
         ],
         [
-            InlineKeyboardButton(text="Промокоды", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_ABOUT),
+            InlineKeyboardButton(text="Промокоды", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_PROMO),
             InlineKeyboardButton(text="О проекте", callback_data="about",      icon_custom_emoji_id=EMOJI_ABOUT)
         ]
     ])
@@ -206,7 +211,7 @@ def get_profile_menu():
             InlineKeyboardButton(text="Вывести",   callback_data="withdraw", icon_custom_emoji_id=EMOJI_WITHDRAWAL)
         ],
         [
-            InlineKeyboardButton(text="На главную", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
+            InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
         ]
     ])
 
@@ -241,12 +246,12 @@ def get_promo_menu():
             InlineKeyboardButton(
                 text="Ввести промокод",
                 callback_data="promo_enter",
-                icon_custom_emoji_id=EMOJI_ABOUT
+                icon_custom_emoji_id=EMOJI_PROMO
             )
         ],
         [
             InlineKeyboardButton(
-                text="На главную",
+                text="Назад",
                 callback_data="back_to_main",
                 icon_custom_emoji_id=EMOJI_BACK
             )
@@ -455,7 +460,7 @@ async def cmd_add_promo(message: Message):
     await message.answer(
         f"✅ <b>Промокод создан!</b>\n\n"
         f"<blockquote>"
-        f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">📊</tg-emoji> Код: <code>{code}</code>\n"
+        f"<tg-emoji emoji-id=\"{EMOJI_PROMO}\">📊</tg-emoji> Код: <code>{code}</code>\n"
         f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">💰</tg-emoji> Сумма: <b><code>{amount:.2f}</code></b> <tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji>\n"
         f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">🔥</tg-emoji> Активаций: <b><code>{activations}</code></b>"
         f"</blockquote>",
@@ -469,10 +474,10 @@ async def cmd_add_promo(message: Message):
 async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
-        f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">💣</tg-emoji> <b>Промокоды</b>\n\n"
+        f"<tg-emoji emoji-id=\"{EMOJI_PROMO}\">💣</tg-emoji> <b>Промокоды</b>\n\n"
         f"<blockquote>"
-        f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">💰</tg-emoji> Активируй промокод и получи бонус на баланс.\n\n"
-        f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">🔥</tg-emoji> Промокоды публикуются в нашем канале и чате."
+        f"<tg-emoji emoji-id=\"5330320040883411678\">💰</tg-emoji> Активируй промокод и получи бонус на баланс.\n\n"
+        f"<tg-emoji emoji-id=\"5199552030615558774\">🔥</tg-emoji> Промокоды публикуются в нашем канале и чате."
         f"</blockquote>\n\n"
         f"<tg-emoji emoji-id=\"5907025791006283345\">💬</tg-emoji> <b><a href=\"https://t.me/your_support\">Тех. поддержка</a> | <a href=\"https://t.me/your_chat\">Наш чат</a> | <a href=\"https://t.me/your_news\">Новости</a></b>",
         parse_mode=ParseMode.HTML,
@@ -486,7 +491,7 @@ async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
 async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PromoState.entering_code)
     await callback.message.edit_text(
-        f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">📊</tg-emoji> <b>Введите промокод</b>\n\n"
+        f"<tg-emoji emoji-id=\"5197269100878907942\">📊</tg-emoji> <b>Введите промокод</b>\n\n"
         f"<blockquote><i>Напишите код в чат — регистр не важен.</i></blockquote>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_promo_cancel_menu()
