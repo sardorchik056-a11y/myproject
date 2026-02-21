@@ -54,7 +54,13 @@ if RENDER_URL:
 else:
     WEBHOOK_URL = f"https://myproject-f34u.onrender.com{WEBHOOK_PATH}"
 
-# ID кастомных эмодзи (только оригинальные из проекта)
+# ========== ССЫЛКИ ==========
+LINK_NEWS     = "https://t.me/FesteryNews"
+LINK_CHAT     = "https://t.me/FesteryCasChat"
+LINK_INSTRUCT = "https://t.me/Festery_info"
+LINK_SUPPORT  = "https://t.me/Xyloth_1337"
+
+# ID кастомных эмодзи
 EMOJI_WELCOME    = "5199885118214255386"
 EMOJI_PROFILE    = "5906581476639513176"
 EMOJI_PARTNERS   = "5906986955911993888"
@@ -69,11 +75,11 @@ EMOJI_STATS      = "5197288647275071607"
 EMOJI_WITHDRAWAL = "5445355530111437729"
 EMOJI_MINES      = "5307996024738395492"
 EMOJI_PROMO      = "5444856076954520455"
-EMOJI_INSTRUCT = "5334544901428229844"
-EMOJI_CHANNEL = "5424818078833715060"
-EMOJI_CHAT = "5443038326535759644"
-EMOJI_SUPORT = "5907025791006283345"
-EMOJI_PEREXOD = "5906839307821259375"
+EMOJI_INSTRUCT   = "5334544901428229844"
+EMOJI_CHANNEL    = "5424818078833715060"
+EMOJI_CHAT       = "5443038326535759644"
+EMOJI_SUPORT     = "5907025791006283345"
+EMOJI_PEREXOD    = "5906839307821259375"
 
 # Кастомные callback_data для игр
 GAME_CALLBACKS = {
@@ -164,11 +170,21 @@ def sync_balances(user_id: int):
     return storage.get_balance(user_id)
 
 
+# ========== СТРОКА ССЫЛОК (переиспользуется во всех текстах) ==========
+def links_line() -> str:
+    return (
+        f'<tg-emoji emoji-id="{EMOJI_SUPORT}">💬</tg-emoji> <b>'
+        f'<a href="{LINK_SUPPORT}">Тех. поддержка</a> | '
+        f'<a href="{LINK_CHAT}">Наш чат</a> | '
+        f'<a href="{LINK_NEWS}">Новости</a></b>'
+    )
+
+
 # ========== КЛАВИАТУРЫ ==========
 def get_main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Профиль",  callback_data="profile",  icon_custom_emoji_id=EMOJI_PROFILE),
+            InlineKeyboardButton(text="Профиль",  callback_data="profile",   icon_custom_emoji_id=EMOJI_PROFILE),
             InlineKeyboardButton(text="Партнёры", callback_data="referrals", icon_custom_emoji_id=EMOJI_PARTNERS)
         ],
         [
@@ -180,7 +196,7 @@ def get_main_menu():
             InlineKeyboardButton(text="О проекте", callback_data="about",      icon_custom_emoji_id=EMOJI_ABOUT)
         ],
         [
-            InlineKeyboardButton(text="Инструкция", url="https://t.me/your_channel", icon_custom_emoji_id=EMOJI_INSTRUCT)
+            InlineKeyboardButton(text="Инструкция", url=LINK_INSTRUCT, icon_custom_emoji_id=EMOJI_INSTRUCT)
         ]
     ])
 
@@ -188,12 +204,12 @@ def get_main_menu():
 def get_games_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎲 Кубик",    callback_data=GAME_CALLBACKS['dice']),
+            InlineKeyboardButton(text="🎲 Кубик",     callback_data=GAME_CALLBACKS['dice']),
             InlineKeyboardButton(text="🏀 Баскетбол", callback_data=GAME_CALLBACKS['basketball'])
         ],
         [
-            InlineKeyboardButton(text="⚽️ Футбол",  callback_data=GAME_CALLBACKS['football']),
-            InlineKeyboardButton(text="🎯 Дартс",   callback_data=GAME_CALLBACKS['darts'])
+            InlineKeyboardButton(text="⚽️ Футбол", callback_data=GAME_CALLBACKS['football']),
+            InlineKeyboardButton(text="🎯 Дартс",  callback_data=GAME_CALLBACKS['darts'])
         ],
         [
             InlineKeyboardButton(text="🎳 Боулинг", callback_data=GAME_CALLBACKS['bowling'])
@@ -276,21 +292,21 @@ def get_promo_cancel_menu():
 # ========== ТЕКСТЫ ==========
 def get_main_menu_text():
     return (
-        f"<blockquote><tg-emoji emoji-id=\"5197288647275071607\">🎰</tg-emoji> <b>Честные игры — прозрачные правила и реальные шансы на победу.</b>\n"
-        f"<b>Без скрытых условий, всё открыто и по-настоящему честно.</b></blockquote>\n\n"
-        f"<blockquote><tg-emoji emoji-id=\"5195033767969839232\">⚡</tg-emoji> <b>Быстрые выплаты — моментальный вывод средств без задержек.</b>\n"
-        f"<tg-emoji emoji-id=\"5445355530111437729\">💎</tg-emoji> <b>Выводы через <tg-emoji emoji-id=\"{EMOJI_CRYPTOBOT}\">🔵</tg-emoji> <a href=\"https://t.me/send\">Cryptobot</a></b></blockquote>\n\n"
-        f"<tg-emoji emoji-id=\"5907025791006283345\">💬</tg-emoji> <b><a href=\"https://t.me/your_support\">Тех. поддержка</a> | <a href=\"https://t.me/your_chat\">Наш чат</a> | <a href=\"https://t.me/your_news\">Новости</a></b>\n"
+        f'<blockquote><tg-emoji emoji-id="5197288647275071607">🎰</tg-emoji> <b>Честные игры — прозрачные правила и реальные шансы на победу.</b>\n'
+        f'<b>Без скрытых условий, всё открыто и по-настоящему честно.</b></blockquote>\n\n'
+        f'<blockquote><tg-emoji emoji-id="5195033767969839232">⚡</tg-emoji> <b>Быстрые выплаты — моментальный вывод средств без задержек.</b>\n'
+        f'<tg-emoji emoji-id="5445355530111437729">💎</tg-emoji> <b>Выводы через <tg-emoji emoji-id="{EMOJI_CRYPTOBOT}">🔵</tg-emoji> <a href="https://t.me/send">Cryptobot</a></b></blockquote>\n\n'
+        f'{links_line()}\n'
     )
 
 
 def get_games_menu_text(user_id: int):
     balance = sync_balances(user_id)
     return (
-        f"<blockquote><tg-emoji emoji-id=\"{EMOJI_GAMES}\">🎮</tg-emoji> <b>Игры</b></blockquote>\n\n"
-        f"<blockquote><tg-emoji emoji-id=\"5278467510604160626\">🎮</tg-emoji>:<code>{balance:.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">🎮</tg-emoji></blockquote>\n\n"
-        f"<blockquote><b>Выберите игру:</b></blockquote>\n\n"
-        f"<tg-emoji emoji-id=\"5907025791006283345\">💬</tg-emoji> <b><a href=\"https://t.me/your_support\">Тех. поддержка</a> | <a href=\"https://t.me/your_chat\">Наш чат</a> | <a href=\"https://t.me/your_news\">Новости</a></b>\n"
+        f'<blockquote><tg-emoji emoji-id="{EMOJI_GAMES}">🎮</tg-emoji> <b>Игры</b></blockquote>\n\n'
+        f'<blockquote><tg-emoji emoji-id="5278467510604160626">🎮</tg-emoji>:<code>{balance:.2f}</code><tg-emoji emoji-id="5197434882321567830">🎮</tg-emoji></blockquote>\n\n'
+        f'<blockquote><b>Выберите игру:</b></blockquote>\n\n'
+        f'{links_line()}\n'
     )
 
 
@@ -310,14 +326,14 @@ def get_profile_text(user_first_name: str, days_in_project: int, user_id: int):
         days_text = "дней"
 
     return (
-        f"<blockquote><b><tg-emoji emoji-id=\"{EMOJI_PROFILE}\">👤</tg-emoji> Профиль</b></blockquote>\n\n"
-        f"<blockquote>\n"
-        f"<b><tg-emoji emoji-id=\"5278467510604160626\">💰</tg-emoji>:<code>{balance:,.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji></b>\n"
-        f"<tg-emoji emoji-id=\"5443127283898405358\">📥</tg-emoji> Депозитов: <b><code>{total_deposits:,.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji></b>\n"
-        f"<tg-emoji emoji-id=\"5445355530111437729\">📤</tg-emoji> Выводов: <b><code>{total_withdrawals:,.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji></b>\n"
-        f"<tg-emoji emoji-id=\"5274055917766202507\">📅</tg-emoji> В проекте: <b><code>{days_in_project} {days_text}</code></b>\n"
-        f"</blockquote>\n\n"
-        f"<tg-emoji emoji-id=\"5907025791006283345\">💬</tg-emoji> <b><a href=\"https://t.me/your_support\">Тех. поддержка</a> | <a href=\"https://t.me/your_chat\">Наш чат</a> | <a href=\"https://t.me/your_news\">Новости</a></b>\n"
+        f'<blockquote><b><tg-emoji emoji-id="{EMOJI_PROFILE}">👤</tg-emoji> Профиль</b></blockquote>\n\n'
+        f'<blockquote>\n'
+        f'<b><tg-emoji emoji-id="5278467510604160626">💰</tg-emoji>:<code>{balance:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
+        f'<tg-emoji emoji-id="5443127283898405358">📥</tg-emoji> Депозитов: <b><code>{total_deposits:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
+        f'<tg-emoji emoji-id="5445355530111437729">📤</tg-emoji> Выводов: <b><code>{total_withdrawals:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
+        f'<tg-emoji emoji-id="5274055917766202507">📅</tg-emoji> В проекте: <b><code>{days_in_project} {days_text}</code></b>\n'
+        f'</blockquote>\n\n'
+        f'{links_line()}\n'
     )
 
 
@@ -332,8 +348,8 @@ async def cmd_start(message: Message):
             storage.get_user(message.from_user.id)
             storage.set_pending(message.from_user.id, 'deposit')
             await message.answer(
-                f"<b><tg-emoji emoji-id=\"{EMOJI_WALLET}\">💰</tg-emoji> Пополнение баланса</b>\n\n"
-                f"<blockquote><i><tg-emoji emoji-id=\"5197269100878907942\">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>",
+                f'<b><tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Пополнение баланса</b>\n\n'
+                f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=get_cancel_menu()
             )
@@ -343,8 +359,8 @@ async def cmd_start(message: Message):
             storage.get_user(message.from_user.id)
             storage.set_pending(message.from_user.id, 'withdraw')
             await message.answer(
-                f"<b><tg-emoji emoji-id=\"{EMOJI_WITHDRAWAL}\">💸</tg-emoji> Вывод средств</b>\n\n"
-                f"<blockquote><i><tg-emoji emoji-id=\"5197269100878907942\">💸</tg-emoji> Введите сумму вывода:</i></blockquote>",
+                f'<b><tg-emoji emoji-id="{EMOJI_WITHDRAWAL}">💸</tg-emoji> Вывод средств</b>\n\n'
+                f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму вывода:</i></blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=get_cancel_menu()
             )
@@ -425,11 +441,11 @@ async def cmd_add_promo(message: Message):
     parts = message.text.split()
     if len(parts) != 4:
         await message.answer(
-            f"<b><tg-emoji emoji-id=\"{EMOJI_ABOUT}\">📊</tg-emoji> Создание промокода</b>\n\n"
-            f"<blockquote><b>Использование:</b>\n"
-            f"<code>/addpromo [код] [сумма] [активации]</code>\n\n"
-            f"<b>Пример:</b>\n"
-            f"<code>/addpromo SUMMER25 50 100</code></blockquote>",
+            f'<b><tg-emoji emoji-id="{EMOJI_ABOUT}">📊</tg-emoji> Создание промокода</b>\n\n'
+            f'<blockquote><b>Использование:</b>\n'
+            f'<code>/addpromo [код] [сумма] [активации]</code>\n\n'
+            f'<b>Пример:</b>\n'
+            f'<code>/addpromo SUMMER25 50 100</code></blockquote>',
             parse_mode=ParseMode.HTML
         )
         return
@@ -462,12 +478,12 @@ async def cmd_add_promo(message: Message):
         return
 
     await message.answer(
-        f"✅ <b>Промокод создан!</b>\n\n"
-        f"<blockquote>"
-        f"<tg-emoji emoji-id=\"{EMOJI_PROMO}\">📊</tg-emoji> Код: <code>{code}</code>\n"
-        f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">💰</tg-emoji> Сумма: <b><code>{amount:.2f}</code></b> <tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji>\n"
-        f"<tg-emoji emoji-id=\"{EMOJI_ABOUT}\">🔥</tg-emoji> Активаций: <b><code>{activations}</code></b>"
-        f"</blockquote>",
+        f'✅ <b>Промокод создан!</b>\n\n'
+        f'<blockquote>'
+        f'<tg-emoji emoji-id="{EMOJI_PROMO}">📊</tg-emoji> Код: <code>{code}</code>\n'
+        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">💰</tg-emoji> Сумма: <b><code>{amount:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>\n'
+        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">🔥</tg-emoji> Активаций: <b><code>{activations}</code></b>'
+        f'</blockquote>',
         parse_mode=ParseMode.HTML
     )
     logging.info(f"Админ {message.from_user.id} создал промокод {code} на {amount} ({activations} активаций)")
@@ -478,12 +494,12 @@ async def cmd_add_promo(message: Message):
 async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
-        f"<tg-emoji emoji-id=\"{EMOJI_PROMO}\">💣</tg-emoji> <b>Промокоды</b>\n\n"
-        f"<blockquote>"
-        f"<tg-emoji emoji-id=\"5330320040883411678\">💰</tg-emoji> Активируй промокод и получи бонус на баланс.\n\n"
-        f"<tg-emoji emoji-id=\"5199552030615558774\">🔥</tg-emoji> Промокоды публикуются в нашем канале и чате."
-        f"</blockquote>\n\n"
-        f"<tg-emoji emoji-id=\"5907025791006283345\">💬</tg-emoji> <b><a href=\"https://t.me/your_support\">Тех. поддержка</a> | <a href=\"https://t.me/your_chat\">Наш чат</a> | <a href=\"https://t.me/your_news\">Новости</a></b>",
+        f'<tg-emoji emoji-id="{EMOJI_PROMO}">💣</tg-emoji> <b>Промокоды</b>\n\n'
+        f'<blockquote>'
+        f'<tg-emoji emoji-id="5330320040883411678">💰</tg-emoji> Активируй промокод и получи бонус на баланс.\n\n'
+        f'<tg-emoji emoji-id="5199552030615558774">🔥</tg-emoji> Промокоды публикуются в нашем <a href="{LINK_CHAT}">чате</a> и <a href="{LINK_NEWS}">канале</a>.'
+        f'</blockquote>\n\n'
+        f'{links_line()}',
         parse_mode=ParseMode.HTML,
         reply_markup=get_promo_menu(),
         disable_web_page_preview=True
@@ -496,8 +512,8 @@ async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
 async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
     await state.set_state(PromoState.entering_code)
     await callback.message.edit_text(
-        f"<tg-emoji emoji-id=\"5197269100878907942\">📊</tg-emoji> <b>Введите промокод</b>\n\n"
-        f"<blockquote><i>Напишите код в чат — регистр не важен.</i></blockquote>",
+        f'<tg-emoji emoji-id="5197269100878907942">📊</tg-emoji> <b>Введите промокод</b>\n\n'
+        f'<blockquote><i>Напишите код в чат — регистр не важен.</i></blockquote>',
         parse_mode=ParseMode.HTML,
         reply_markup=get_promo_cancel_menu()
     )
@@ -598,8 +614,8 @@ async def deposit_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     storage.set_pending(callback.from_user.id, 'deposit')
     await callback.message.edit_text(
-        f"<b><tg-emoji emoji-id=\"{EMOJI_WALLET}\">💰</tg-emoji> Пополнение баланса</b>\n\n"
-        f"<blockquote><i><tg-emoji emoji-id=\"5197269100878907942\">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>",
+        f'<b><tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Пополнение баланса</b>\n\n'
+        f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>',
         parse_mode=ParseMode.HTML,
         reply_markup=get_cancel_menu()
     )
@@ -612,8 +628,8 @@ async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     storage.set_pending(callback.from_user.id, 'withdraw')
     await callback.message.edit_text(
-        f"<b><tg-emoji emoji-id=\"{EMOJI_WITHDRAWAL}\">💸</tg-emoji> Вывод средств</b>\n\n"
-        f"<blockquote><i><tg-emoji emoji-id=\"5197269100878907942\">💸</tg-emoji> Введите сумму вывода:</i></blockquote>",
+        f'<b><tg-emoji emoji-id="{EMOJI_WITHDRAWAL}">💸</tg-emoji> Вывод средств</b>\n\n'
+        f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму вывода:</i></blockquote>',
         parse_mode=ParseMode.HTML,
         reply_markup=get_cancel_menu()
     )
@@ -636,14 +652,13 @@ async def tower_command_handler(message: Message, state: FSMContext):
 async def handle_text_message(message: Message, state: FSMContext):
     from payments import handle_amount_input
 
-    # — КОМАНДА БАЛАНСА —
     if is_balance_command(message.text):
         balance = sync_balances(message.from_user.id)
         await message.reply(
-            f"<blockquote><b><tg-emoji emoji-id=\"5278467510604160626\">💰</tg-emoji> "
-            f"<code>{balance:,.2f}</code> "
-            f"<tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji></b></blockquote>\n\n"
-            f"<blockquote><i>Выберите действие ниже <tg-emoji emoji-id=\"5201691993775818138\">💰</tg-emoji></i></blockquote>",
+            f'<blockquote><b><tg-emoji emoji-id="5278467510604160626">💰</tg-emoji> '
+            f'<code>{balance:,.2f}</code> '
+            f'<tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>\n\n'
+            f'<blockquote><i>Выберите действие ниже <tg-emoji emoji-id="5201691993775818138">💰</tg-emoji></i></blockquote>',
             parse_mode=ParseMode.HTML,
             reply_markup=get_balance_menu()
         )
@@ -651,7 +666,6 @@ async def handle_text_message(message: Message, state: FSMContext):
 
     current_state = await state.get_state()
 
-    # ── Ввод промокода ──────────────────────────────────────────────────
     if current_state == PromoState.entering_code.state:
         code = message.text.strip()
         ok, amount, reason = promo_use(code, message.from_user.id)
@@ -662,11 +676,11 @@ async def handle_text_message(message: Message, state: FSMContext):
             new_balance = storage.get_balance(message.from_user.id)
             await state.clear()
             await message.answer(
-                f"✅ <b>Промокод активирован!</b>\n\n"
-                f"<blockquote>"
-                f"<tg-emoji emoji-id=\"{EMOJI_WALLET}\">💰</tg-emoji> Начислено: <b><code>+{amount:.2f}</code></b> <tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji>\n"
-                f"<tg-emoji emoji-id=\"5278467510604160626\">💰</tg-emoji> Баланс: <b><code>{new_balance:.2f}</code></b> <tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji>"
-                f"</blockquote>",
+                f'✅ <b>Промокод активирован!</b>\n\n'
+                f'<blockquote>'
+                f'<tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Начислено: <b><code>+{amount:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>\n'
+                f'<tg-emoji emoji-id="5278467510604160626">💰</tg-emoji> Баланс: <b><code>{new_balance:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>'
+                f'</blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(
@@ -691,27 +705,22 @@ async def handle_text_message(message: Message, state: FSMContext):
             )
         return
 
-    # ── Вывод реферального баланса ──────────────────────────────────────
     if current_state == ReferralWithdraw.entering_amount.state:
         await ref_withdraw_amount(message, state)
         return
 
-    # Ставка в игре Мины
     if current_state == MinesGame.choosing_bet:
         await process_mines_bet(message, state, storage)
         return
 
-    # Ставка в игре Башня
     if current_state == TowerGame.choosing_bet:
         await process_tower_bet(message, state, storage)
         return
 
-    # Команды ставок
     if is_bet_command(message.text):
         await handle_text_bet_command(message, betting_game)
         return
 
-    # Числовой ввод
     try:
         float(message.text)
         if current_state:
@@ -739,12 +748,12 @@ async def about_callback(callback: CallbackQuery, state: FSMContext):
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="Наш чат",    url="https://t.me/your_chat",    icon_custom_emoji_id=EMOJI_CHAT),
-                InlineKeyboardButton(text="Наш канал",  url="https://t.me/your_channel", icon_custom_emoji_id=EMOJI_CHANNEL),
-                InlineKeyboardButton(text="Переходник", url="https://t.me/your_bridge",  icon_custom_emoji_id=EMOJI_PEREXOD)
+                InlineKeyboardButton(text="Новости",    url=LINK_NEWS,     icon_custom_emoji_id=EMOJI_CHANNEL),
+                InlineKeyboardButton(text="Чат",        url=LINK_CHAT,     icon_custom_emoji_id=EMOJI_CHAT),
+                InlineKeyboardButton(text="Инструкция", url=LINK_INSTRUCT, icon_custom_emoji_id=EMOJI_INSTRUCT)
             ],
             [
-                InlineKeyboardButton(text="Тех. поддержка", url="https://t.me/your_support", icon_custom_emoji_id=EMOJI_SUPORT)
+                InlineKeyboardButton(text="Поддержка", url=LINK_SUPPORT, icon_custom_emoji_id=EMOJI_SUPORT)
             ],
             [
                 InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
