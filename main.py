@@ -70,6 +70,10 @@ EMOJI_WITHDRAWAL = "5445355530111437729"
 EMOJI_MINES      = "5307996024738395492"
 EMOJI_PROMO      = "5444856076954520455"
 EMOJI_INSTRUCT = "5334544901428229844"
+EMOJI_CHANNEL =5424818078833715060"
+EMOJI_CHAT = "5443038326535759644"
+EMOJI_SUPORT = "5907025791006283345"
+EMOJI_PEREXOD = "5906839307821259375"
 
 # Кастомные callback_data для игр
 GAME_CALLBACKS = {
@@ -728,16 +732,21 @@ async def leaders_callback(callback: CallbackQuery, state: FSMContext):
 async def about_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
-        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">ℹ️</tg-emoji> <b>О проекте</b>\n\n'
-        f'Мы — команда профессионалов, создающая честный гемблинг с 2020 года.\n\n'
-        f'• Мгновенные выплаты\n'
-        f'• Прозрачные алгоритмы\n'
-        f'• Поддержка 24/7\n'
-        f'• Лицензия Curacao',
+        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">ℹ️</tg-emoji> <b>О проекте</b>\n\n',
         parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")
-        ]])
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Наш чат",    url="https://t.me/your_chat",    icon_custom_emoji_id=EMOJI_CHAT),
+                InlineKeyboardButton(text="Наш канал",  url="https://t.me/your_channel", icon_custom_emoji_id=EMOJI_CHANNEL),
+                InlineKeyboardButton(text="Переходник", url="https://t.me/your_bridge",  icon_custom_emoji_id=EMOJI_PEREXOD)
+            ],
+            [
+                InlineKeyboardButton(text="Тех. поддержка", url="https://t.me/your_support", icon_custom_emoji_id=EMOJI_SUPORT)
+            ],
+            [
+                InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
+            ]
+        ])
     )
     await callback.answer()
 
