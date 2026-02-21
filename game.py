@@ -62,42 +62,42 @@ EMOJI_MISS = "5210952531676504517"
 
 # Конфигурации для ставок
 DICE_BET_TYPES = {
-    'куб_нечет': {'name': '🎲 Нечетное', 'values': [1, 3, 5], 'multiplier': 1.8},
-    'куб_чет': {'name': '🎲 Четное', 'values': [2, 4, 6], 'multiplier': 1.8},
-    'куб_мал': {'name': '📉 Меньше (1-3)', 'values': [1, 2, 3], 'multiplier': 1.8},
-    'куб_бол': {'name': '📈 Больше (4-6)', 'values': [4, 5, 6], 'multiplier': 1.8},
-    'куб_2меньше': {'name': '🎲🎲 Оба меньше 4', 'multiplier': 3.6, 'special': 'double_dice'},
-    'куб_2больше': {'name': '🎲🎲 Оба больше 3', 'multiplier': 3.6, 'special': 'double_dice'},
-    'куб_1': {'name': '1️⃣', 'values': [1], 'multiplier': 4.7},
-    'куб_2': {'name': '2️⃣', 'values': [2], 'multiplier': 4.7},
-    'куб_3': {'name': '3️⃣', 'values': [3], 'multiplier': 4.7},
-    'куб_4': {'name': '4️⃣', 'values': [4], 'multiplier': 4.7},
-    'куб_5': {'name': '5️⃣', 'values': [5], 'multiplier': 4.7},
-    'куб_6': {'name': '6️⃣', 'values': [6], 'multiplier': 4.7},
+    'куб_нечет': {'name': '🎲 Нечетное', 'values': [1, 3, 5], 'multiplier': 1.9},
+    'куб_чет': {'name': '🎲 Четное', 'values': [2, 4, 6], 'multiplier': 1.9},
+    'куб_мал': {'name': '📉 Меньше (1-3)', 'values': [1, 2, 3], 'multiplier': 1.9},
+    'куб_бол': {'name': '📈 Больше (4-6)', 'values': [4, 5, 6], 'multiplier': 1.9},
+    'куб_2меньше': {'name': '🎲🎲 Оба меньше 4', 'multiplier': 3.8, 'special': 'double_dice'},
+    'куб_2больше': {'name': '🎲🎲 Оба больше 3', 'multiplier': 3.8, 'special': 'double_dice'},
+    'куб_1': {'name': '1️⃣', 'values': [1], 'multiplier': 5.7},
+    'куб_2': {'name': '2️⃣', 'values': [2], 'multiplier': 5.7},
+    'куб_3': {'name': '3️⃣', 'values': [3], 'multiplier': 5.7},
+    'куб_4': {'name': '4️⃣', 'values': [4], 'multiplier': 5.7},
+    'куб_5': {'name': '5️⃣', 'values': [5], 'multiplier': 5.7},
+    'куб_6': {'name': '6️⃣', 'values': [6], 'multiplier': 5.7},
 }
 
 BASKETBALL_BET_TYPES = {
     'баскет_гол': {'name': '🏀 Гол (2 очка)', 'values': [4, 5], 'multiplier': 1.85},
     'баскет_мимо': {'name': '🏀 Мимо', 'values': [1, 2, 3], 'multiplier': 1.7},
-    'баскет_3очка': {'name': '🏀 3-очковый', 'values': [5], 'multiplier': 2.75},
+    'баскет_3очка': {'name': '🏀 3-очковый', 'values': [5], 'multiplier': 5.7},
 }
 
 FOOTBALL_BET_TYPES = {
-    'футбол_гол': {'name': '⚽ Гол', 'values': [4, 5], 'multiplier': 1.3},
-    'футбол_мимо': {'name': '⚽ Мимо', 'values': [1, 2, 3], 'multiplier': 1.7},
+    'футбол_гол': {'name': '⚽ Гол', 'values': [4, 5], 'multiplier': 1.35},
+    'футбол_мимо': {'name': '⚽ Мимо', 'values': [1, 2, 3], 'multiplier': 1.75},
 }
 
 DART_BET_TYPES = {
     'дартс_белое': {'name': '⚪ Белое', 'values': [3, 5], 'multiplier': 2.35},
-    'дартс_красное': {'name': '🔴 Красное', 'values': [2, 4, 6], 'multiplier': 1.85},
-    'дартс_мимо': {'name': '❌ Мимо', 'values': [1], 'multiplier': 4.35},
-    'дартс_центр': {'name': '🎯 Центр', 'values': [6], 'multiplier': 4.35},
+    'дартс_красное': {'name': '🔴 Красное', 'values': [2, 4, 6], 'multiplier': 1.9},
+    'дартс_мимо': {'name': '❌ Мимо', 'values': [1], 'multiplier': 5.7},
+    'дартс_центр': {'name': '🎯 Центр', 'values': [6], 'multiplier': 5.7},
 }
 
 BOWLING_BET_TYPES = {
     'боулинг_поражение': {'name': '🎳 Поражение', 'values': [], 'multiplier': 1.8, 'special': 'bowling_vs'},
     'боулинг_победа': {'name': '🎳 Победа', 'values': [], 'multiplier': 1.8, 'special': 'bowling_vs'},
-    'боулинг_страйк': {'name': '🎳 Страйк', 'values': [6], 'multiplier': 3.75},
+    'боулинг_страйк': {'name': '🎳 Страйк', 'values': [6], 'multiplier': 5.7},
 }
 
 # Маппинг команд для текстового ввода (РАСШИРЕННЫЙ)
@@ -442,8 +442,8 @@ async def handle_text_bet_command(message: Message, betting_game: BettingGame):
             "<b>🎳 Боулинг:</b>\n"
             "<code>боулинг победа 10</code>\n"
             "<code>боулинг поражение 15</code>\n"
-            "<code>боулинг страйк 50</code>\n\n"
-            "🌐 Команды работают на русском и английском!",
+            "<code>боулинг страйк 50</code>\n\n"                                    
+            "🌐 Команды работают на русском и английском!",            
             parse_mode='HTML'
         )
         return
@@ -514,19 +514,19 @@ async def show_dice_menu(callback: CallbackQuery):
     """Показать меню кубика с кастомными эмодзи"""
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Нечет (x1.8)", callback_data="bet_dice_куб_нечет", icon_custom_emoji_id=EMOJI_NECHET),
-            InlineKeyboardButton(text="Чет (x1.8)", callback_data="bet_dice_куб_чет", icon_custom_emoji_id=EMOJI_CHET)
+            InlineKeyboardButton(text="Нечет (x1.9)", callback_data="bet_dice_куб_нечет", icon_custom_emoji_id=EMOJI_NECHET),
+            InlineKeyboardButton(text="Чет (x1.9)", callback_data="bet_dice_куб_чет", icon_custom_emoji_id=EMOJI_CHET)
         ],
         [
-            InlineKeyboardButton(text="Меньше (x1.8)", callback_data="bet_dice_куб_мал", icon_custom_emoji_id=EMOJI_LESS),
-            InlineKeyboardButton(text="Больше (x1.8)", callback_data="bet_dice_куб_бол", icon_custom_emoji_id=EMOJI_MORE)
+            InlineKeyboardButton(text="Меньше (x1.9)", callback_data="bet_dice_куб_мал", icon_custom_emoji_id=EMOJI_LESS),
+            InlineKeyboardButton(text="Больше (x1.9)", callback_data="bet_dice_куб_бол", icon_custom_emoji_id=EMOJI_MORE)
         ],
         [
-            InlineKeyboardButton(text="2-меньше (x3.6)", callback_data="bet_dice_куб_2меньше", icon_custom_emoji_id=EMOJI_2LESS),
-            InlineKeyboardButton(text="2-больше (x3.6)", callback_data="bet_dice_куб_2больше", icon_custom_emoji_id=EMOJI_2MORE)
+            InlineKeyboardButton(text="2-меньше (x3.8)", callback_data="bet_dice_куб_2меньше", icon_custom_emoji_id=EMOJI_2LESS),
+            InlineKeyboardButton(text="2-больше (x3.8)", callback_data="bet_dice_куб_2больше", icon_custom_emoji_id=EMOJI_2MORE)
         ],
         [
-            InlineKeyboardButton(text="Точное число (x4.7)", callback_data="bet_dice_exact", icon_custom_emoji_id=EMOJI_NUMBER)
+            InlineKeyboardButton(text="Точное число (x5.7)", callback_data="bet_dice_exact", icon_custom_emoji_id=EMOJI_NUMBER)
         ],
         [
             InlineKeyboardButton(text="Назад", callback_data="games", icon_custom_emoji_id=EMOJI_BACK)
@@ -545,14 +545,14 @@ async def show_exact_number_menu(callback: CallbackQuery):
     """Показать меню точного числа"""
     markup = InlineKeyboardMarkup(inline_keyboard=[
     [
-        InlineKeyboardButton(text="(x4.7)", callback_data="bet_dice_куб_1", icon_custom_emoji_id="5382322671679708881"),
-        InlineKeyboardButton(text="(x4.7)", callback_data="bet_dice_куб_2", icon_custom_emoji_id="5381990043642502553"),
-        InlineKeyboardButton(text="(x4.7)", callback_data="bet_dice_куб_3", icon_custom_emoji_id="5381879959335738545")
+        InlineKeyboardButton(text="(x5.7)", callback_data="bet_dice_куб_1", icon_custom_emoji_id="5382322671679708881"),
+        InlineKeyboardButton(text="(x5.7)", callback_data="bet_dice_куб_2", icon_custom_emoji_id="5381990043642502553"),
+        InlineKeyboardButton(text="(x5.7)", callback_data="bet_dice_куб_3", icon_custom_emoji_id="5381879959335738545")
     ],
     [
-        InlineKeyboardButton(text="(x4.7)", callback_data="bet_dice_куб_4", icon_custom_emoji_id="5382054253403577563"),
-        InlineKeyboardButton(text="(x4.7)", callback_data="bet_dice_куб_5", icon_custom_emoji_id="5391197405553107640"),
-        InlineKeyboardButton(text="(x4.7)", callback_data="bet_dice_куб_6", icon_custom_emoji_id="5390966190283694453")
+        InlineKeyboardButton(text="(x5.7)", callback_data="bet_dice_куб_4", icon_custom_emoji_id="5382054253403577563"),
+        InlineKeyboardButton(text="(x5.7)", callback_data="bet_dice_куб_5", icon_custom_emoji_id="5391197405553107640"),
+        InlineKeyboardButton(text="(x5.7)", callback_data="bet_dice_куб_6", icon_custom_emoji_id="5390966190283694453")
     ],
     [
         InlineKeyboardButton(text="Назад", callback_data="custom_dice_001", icon_custom_emoji_id=EMOJI_BACK)
@@ -571,7 +571,7 @@ async def show_basketball_menu(callback: CallbackQuery):
     """Показать меню баскетбола - НОВОЕ РАСПОЛОЖЕНИЕ"""
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="3-очковый (x2.75)", callback_data="bet_basketball_баскет_3очка", icon_custom_emoji_id=EMOJI_3POINT)
+            InlineKeyboardButton(text="3-очковый (x5.7)", callback_data="bet_basketball_баскет_3очка", icon_custom_emoji_id=EMOJI_3POINT)
         ],
         [
             InlineKeyboardButton(text="Гол (x1.85)", callback_data="bet_basketball_баскет_гол", icon_custom_emoji_id=EMOJI_GOAL),
@@ -594,8 +594,8 @@ async def show_football_menu(callback: CallbackQuery):
     """Показать меню футбола - НОВОЕ РАСПОЛОЖЕНИЕ"""
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="Гол (x1.3)", callback_data="bet_football_футбол_гол", icon_custom_emoji_id=EMOJI_GOAL),
-            InlineKeyboardButton(text="Мимо (x1.7)", callback_data="bet_football_футбол_мимо", icon_custom_emoji_id=EMOJI_MISS)
+            InlineKeyboardButton(text="Гол (x1.35)", callback_data="bet_football_футбол_гол", icon_custom_emoji_id=EMOJI_GOAL),
+            InlineKeyboardButton(text="Мимо (x1.75)", callback_data="bet_football_футбол_мимо", icon_custom_emoji_id=EMOJI_MISS)
         ],
         [
             InlineKeyboardButton(text="Назад", callback_data="games", icon_custom_emoji_id=EMOJI_BACK)
@@ -615,13 +615,13 @@ async def show_darts_menu(callback: CallbackQuery):
     markup = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="⚪Белое (x2.35)", callback_data="bet_darts_дартс_белое"), 
-            InlineKeyboardButton(text="🔴Красное (x1.85)", callback_data="bet_darts_дартс_красное") 
+            InlineKeyboardButton(text="🔴Красное (x1.9)", callback_data="bet_darts_дартс_красное") 
         ],
         [
-            InlineKeyboardButton(text="Центр (x3.35)", callback_data="bet_darts_дартс_центр", icon_custom_emoji_id=EMOJI_3POINT)
+            InlineKeyboardButton(text="Центр (x5.7)", callback_data="bet_darts_дартс_центр", icon_custom_emoji_id=EMOJI_3POINT)
         ],
         [
-            InlineKeyboardButton(text="Мимо (x2.2)", callback_data="bet_darts_дартс_мимо", icon_custom_emoji_id=EMOJI_MISS)
+            InlineKeyboardButton(text="Мимо (x5.7)", callback_data="bet_darts_дартс_мимо", icon_custom_emoji_id=EMOJI_MISS)
         ],
         [
             InlineKeyboardButton(text="Назад", callback_data="games", icon_custom_emoji_id=EMOJI_BACK)
@@ -644,7 +644,7 @@ async def show_bowling_menu(callback: CallbackQuery):
             InlineKeyboardButton(text="Поражение (x1.8)", callback_data="bet_bowling_боулинг_поражение", icon_custom_emoji_id=EMOJI_MISS)
         ],
         [
-            InlineKeyboardButton(text="Страйк (x3.75)", callback_data="bet_bowling_боулинг_страйк", icon_custom_emoji_id=EMOJI_3POINT)
+            InlineKeyboardButton(text="Страйк (x5.7)", callback_data="bet_bowling_боулинг_страйк", icon_custom_emoji_id=EMOJI_3POINT)
         ],
         [
             InlineKeyboardButton(text="Назад", callback_data="games", icon_custom_emoji_id=EMOJI_BACK)
