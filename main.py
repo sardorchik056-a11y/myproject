@@ -335,8 +335,7 @@ async def cmd_start(message: Message):
                 f"<b><tg-emoji emoji-id=\"{EMOJI_WALLET}\">💰</tg-emoji> Пополнение баланса</b>\n\n"
                 f"<blockquote><i><tg-emoji emoji-id=\"5197269100878907942\">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>",
                 parse_mode=ParseMode.HTML,
-                reply_markup=get_cancel_menu(),
-                disable_web_page_preview=True
+                reply_markup=get_cancel_menu()
             )
             return
 
@@ -365,8 +364,7 @@ async def cmd_start(message: Message):
         await message.answer(
             get_main_menu_text(),
             parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu(),
-            disable_web_page_preview=True
+            reply_markup=get_main_menu()
         )
     except Exception as e:
         logging.error(f"Error in start: {e}")
