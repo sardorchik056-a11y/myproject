@@ -311,7 +311,7 @@ async def _process_deposit(message: Message, user_id: int):
 
         if amount < MIN_DEPOSIT:
             await message.answer(
-                f'<blockquote>❌ Минимальная сумма пополнения: <b>{MIN_DEPOSIT} USDT</b></blockquote>',
+                f'<blockquote>❌ Минимальная сумма пополнения: <b><code>{MIN_DEPOSIT}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb_back_profile()
             )
@@ -373,7 +373,7 @@ async def _process_withdraw(message: Message, user_id: int):
 
         if amount < MIN_WITHDRAWAL:
             await message.answer(
-                f'<blockquote>❌ Минимальная сумма вывода: <b>{MIN_WITHDRAWAL} USDT</b></blockquote>',
+                f'<blockquote>❌ Минимальная сумма вывода: <b><code>{MIN_WITHDRAWAL}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb_back_profile()
             )
@@ -381,8 +381,7 @@ async def _process_withdraw(message: Message, user_id: int):
 
         if amount > balance:
             await message.answer(
-                f'<blockquote>❌ Недостаточно средств.\n'
-                f'Баланс: <b><code>{balance:.2f}</code> USDT</b></blockquote>',
+                f'<blockquote>❌ Недостаточно средств!',
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb_back_profile()
             )
@@ -402,7 +401,7 @@ async def _process_withdraw(message: Message, user_id: int):
         check = await crypto_api.create_check(amount, user_id)
         if not check or 'bot_check_url' not in check:
             await message.answer(
-                '<blockquote>❌ Ошибка создания чека. Попробуйте позже.</blockquote>',
+                '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb_back_profile()
             )
