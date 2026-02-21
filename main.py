@@ -336,6 +336,7 @@ async def cmd_start(message: Message):
                 f"<blockquote><i><tg-emoji emoji-id=\"5197269100878907942\">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=get_cancel_menu()
+                disable_web_page_preview=True
             )
             return
 
@@ -365,6 +366,7 @@ async def cmd_start(message: Message):
             get_main_menu_text(),
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu()
+            disable_web_page_preview=True
         )
     except Exception as e:
         logging.error(f"Error in start: {e}")
@@ -486,6 +488,7 @@ async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
         f"<tg-emoji emoji-id=\"5907025791006283345\">💬</tg-emoji> <b><a href=\"https://t.me/your_support\">Тех. поддержка</a> | <a href=\"https://t.me/your_chat\">Наш чат</a> | <a href=\"https://t.me/your_news\">Новости</a></b>",
         parse_mode=ParseMode.HTML,
         reply_markup=get_promo_menu()
+        disable_web_page_preview=True
     )
     await callback.answer()
 
@@ -519,6 +522,7 @@ async def profile_callback(callback: CallbackQuery, state: FSMContext):
         get_profile_text(callback.from_user.first_name, days_in_project, callback.from_user.id),
         parse_mode=ParseMode.HTML,
         reply_markup=get_profile_menu()
+        disable_web_page_preview=True
     )
     await callback.answer()
 
@@ -531,6 +535,7 @@ async def games_callback(callback: CallbackQuery, state: FSMContext):
         get_games_menu_text(callback.from_user.id),
         parse_mode=ParseMode.HTML,
         reply_markup=get_games_menu()
+        disable_web_page_preview=True
     )
     await callback.answer()
 
