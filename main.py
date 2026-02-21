@@ -68,11 +68,8 @@ EMOJI_WALLET     = "5443127283898405358"
 EMOJI_STATS      = "5197288647275071607"
 EMOJI_WITHDRAWAL = "5445355530111437729"
 EMOJI_MINES      = "5307996024738395492"
-EMOJI_PROMO = "5444856076954520455"
-
-
-
-
+EMOJI_PROMO      = "5444856076954520455"
+EMOJI_INSTRUCT = "5334544901428229844"
 
 # Кастомные callback_data для игр
 GAME_CALLBACKS = {
@@ -177,6 +174,9 @@ def get_main_menu():
         [
             InlineKeyboardButton(text="Промокоды", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_PROMO),
             InlineKeyboardButton(text="О проекте", callback_data="about",      icon_custom_emoji_id=EMOJI_ABOUT)
+        ],
+        [
+            InlineKeyboardButton(text="Инструкция", url="https://t.me/your_channel", icon_custom_emoji_id=EMOJI_INSTRUCT)
         ]
     ])
 
