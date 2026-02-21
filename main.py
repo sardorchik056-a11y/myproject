@@ -170,7 +170,7 @@ def get_main_menu():
             InlineKeyboardButton(text="Лидеры", callback_data="leaders", icon_custom_emoji_id=EMOJI_LEADERS)
         ],
         [
-            InlineKeyboardButton(text="Промокоды", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_MINES),
+            InlineKeyboardButton(text="Промокоды", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_ABOUT),
             InlineKeyboardButton(text="О проекте", callback_data="about",      icon_custom_emoji_id=EMOJI_ABOUT)
         ]
     ])
