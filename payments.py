@@ -15,7 +15,7 @@ CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
 
 # Минимальные суммы
 MIN_DEPOSIT = 0.1
-MIN_WITHDRAWAL = 0.2
+MIN_WITHDRAWAL = 2.0
 
 # Задержка между выводами (3 минуты)
 WITHDRAWAL_COOLDOWN = 180
