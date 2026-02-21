@@ -623,7 +623,7 @@ async def process_tower_bet(message: Message, state: FSMContext, storage):
     balance = storage.get_balance(user_id)
     if bet > balance:
         await message.answer(
-            f"<blockquote><b>❌ Недостаточно средств!</b></blockquote>",
+            f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
             parse_mode=ParseMode.HTML
         )
         return
@@ -706,8 +706,7 @@ async def process_tower_command(message: Message, state: FSMContext, storage):
     balance = storage.get_balance(user_id)
     if bet > balance:
         await message.answer(
-            f"<blockquote><b>❌ Недостаточно средств!</b>\n"
-            f"Баланс: <code>{balance:.2f}</code></blockquote>",
+            f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
             parse_mode=ParseMode.HTML
         )
         return
