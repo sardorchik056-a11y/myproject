@@ -381,7 +381,7 @@ async def _process_withdraw(message: Message, user_id: int):
 
         if amount > balance:
             await message.answer(
-                f'<blockquote>❌ Недостаточно средств!',
+                f'<blockquote>❌ Недостаточно средств!</blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb_back_profile()
             )
