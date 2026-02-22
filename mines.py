@@ -82,6 +82,29 @@ mines_router = Router()
 _sessions: dict      = {}   # user_id -> session dict
 _timeout_tasks: dict = {}   # user_id -> asyncio.Task
 
+# ========== ЗАЩИТА ОТ ДУБЛЕЙ ==========
+# Локи на пользователя — предотвращают race condition при одновременных нажатиях
+_user_locks: dict = {}          # user_id -> asyncio.Lock
+# Обработанные клетки в текущей сессии хранятся прямо в session['processing_cells']
+# Кэшауты/завершения игры — флаг в session['finishing']
+# Ставки в процессе создания — предотвращают двойную ставку
+_bet_locks: dict = {}           # user_id -> asyncio.Lock
+_bet_in_progress: set = set()   # user_id — ставка сейчас обрабатывается
+
+
+def _get_user_lock(user_id: int) -> asyncio.Lock:
+    """Возвращает персональный локер для пользователя."""
+    if user_id not in _user_locks:
+        _user_locks[user_id] = asyncio.Lock()
+    return _user_locks[user_id]
+
+
+def _get_bet_lock(user_id: int) -> asyncio.Lock:
+    """Возвращает локер для создания ставки."""
+    if user_id not in _bet_locks:
+        _bet_locks[user_id] = asyncio.Lock()
+    return _bet_locks[user_id]
+
 
 # ========== ТАЙМАУТ БЕЗДЕЙСТВИЯ ==========
 
@@ -106,9 +129,16 @@ async def _inactivity_watcher(user_id: int, bot: Bot, storage):
     except asyncio.CancelledError:
         return
 
-    session = _sessions.pop(user_id, None)
-    if session is None:
-        return
+    lock = _get_user_lock(user_id)
+    async with lock:
+        session = _sessions.pop(user_id, None)
+        if session is None:
+            return
+
+        # Помечаем как завершённую чтобы другие обработчики не сработали
+        if session.get('finishing'):
+            return
+        session['finishing'] = True
 
     # Возвращаем ставку
     bet = session.get('bet', 0)
@@ -307,15 +337,17 @@ def game_text(session: dict) -> str:
 def _create_session(mines_count: int, bet: float, chat_id: int) -> dict:
     board, real_positions = generate_board(mines_count)
     return {
-        'board':          board,
-        'real_positions': real_positions,
-        'revealed':       [False] * (GRID_SIZE * GRID_SIZE),
-        'mines_count':    mines_count,
-        'bet':            bet,
-        'gems_opened':    0,
-        'exploded_idx':   -1,
-        'message_id':     None,   # заполняется после отправки
-        'chat_id':        chat_id,
+        'board':            board,
+        'real_positions':   real_positions,
+        'revealed':         [False] * (GRID_SIZE * GRID_SIZE),
+        'mines_count':      mines_count,
+        'bet':              bet,
+        'gems_opened':      0,
+        'exploded_idx':     -1,
+        'message_id':       None,   # заполняется после отправки
+        'chat_id':          chat_id,
+        'finishing':        False,  # флаг завершения — защита от двойного кэшаута
+        'processing_cells': set(),  # ячейки которые сейчас обрабатываются — защита от двойного клика
     }
 
 
@@ -455,110 +487,183 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
         return
 
+    # Защита: игра уже завершается
+    if session.get('finishing'):
+        await callback.answer()
+        return
+
+    # Защита от двойного клика по одной ячейке
     if session['revealed'][idx]:
         await callback.answer("Уже открыта!")
         return
 
-    # Есть активность — перезапускаем таймер
-    _start_timeout(user_id, callback.bot, pay_storage)
+    # Защита от одновременного нажатия на одну ячейку несколькими запросами
+    processing = session.setdefault('processing_cells', set())
+    if idx in processing:
+        await callback.answer()
+        return
 
-    session['revealed'][idx] = True
+    # Берём персональный локер — предотвращает race condition
+    lock = _get_user_lock(user_id)
+    async with lock:
+        # Повторные проверки внутри локера (состояние могло измениться пока ждали)
+        session = _sessions.get(user_id)
+        if not session:
+            await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
+            return
 
-    if session['board'][idx]:
-        # МИНА
-        bet            = session['bet']
-        real_positions = session.get('real_positions', set())
+        if session.get('finishing'):
+            await callback.answer()
+            return
 
-        if idx not in real_positions:
-            if real_positions:
-                remove_one     = random.choice(list(real_positions))
-                real_positions = (real_positions - {remove_one}) | {idx}
-                session['real_positions'] = real_positions
+        if session['revealed'][idx]:
+            await callback.answer("Уже открыта!")
+            return
 
-        _sessions.pop(user_id, None)
-        _cancel_timeout(user_id)
-        await state.clear()
+        processing = session.setdefault('processing_cells', set())
+        if idx in processing:
+            await callback.answer()
+            return
 
-        # Записываем в лидерборд: ставка в оборот, выигрыш = 0
-        name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
-        record_game_result(user_id, name, bet, 0.0)
+        # Помечаем ячейку как "в обработке"
+        processing.add(idx)
 
-        balance = pay_storage.get_balance(user_id)
-        await callback.message.edit_text(
-            f"<blockquote><b><tg-emoji emoji-id=\"5210952531676504517\">🎰</tg-emoji>"
-            f"Вы попали на мину!</b></blockquote>\n\n"
-            f"<blockquote>"
-            f"<tg-emoji emoji-id=\"5447183459602669338\">🎰</tg-emoji>Потеряно: "
-            f"<code>{bet}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
-            f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>Баланс: "
-            f"<code>{balance:.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>"
-            f"</blockquote>\n\n"
-            f"<blockquote><b><i>Вы проиграли ставку! Это не повод сдаваться!</i></b></blockquote>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=build_game_keyboard(session, game_over=True)
-        )
-        await callback.answer("💥Мина!")
+    try:
+        # Есть активность — перезапускаем таймер
+        _start_timeout(user_id, callback.bot, pay_storage)
 
-    else:
-        # ГЕМ
-        session['gems_opened'] += 1
-        gems        = session['gems_opened']
-        mines_count = session['mines_count']
-        hidden      = HIDDEN_MINES.get(mines_count, 0)
-        total_safe  = GRID_SIZE * GRID_SIZE - mines_count - hidden
-        mult        = get_multiplier(mines_count, gems)
+        session['revealed'][idx] = True
 
-        if gems == total_safe:
-            # ПОБЕДА — открыли все безопасные клетки
-            bet      = session['bet']
-            winnings = round(bet * mult, 2)
-            pay_storage.add_balance(user_id, winnings)
-            _sessions.pop(user_id, None)
+        if session['board'][idx]:
+            # МИНА
+            bet            = session['bet']
+            real_positions = session.get('real_positions', set())
+
+            if idx not in real_positions:
+                if real_positions:
+                    remove_one     = random.choice(list(real_positions))
+                    real_positions = (real_positions - {remove_one}) | {idx}
+                    session['real_positions'] = real_positions
+
+            # Атомарно помечаем как завершённую и удаляем сессию
+            lock = _get_user_lock(user_id)
+            async with lock:
+                if session.get('finishing'):
+                    # Уже обрабатывается другим потоком
+                    return
+                session['finishing'] = True
+                _sessions.pop(user_id, None)
+
             _cancel_timeout(user_id)
             await state.clear()
 
-            # Записываем в лидерборд: ставка в оборот, winnings в выигрыш
+            # Записываем в лидерборд: ставка в оборот, выигрыш = 0
             name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
-            record_game_result(user_id, name, bet, winnings)
+            record_game_result(user_id, name, bet, 0.0)
 
             balance = pay_storage.get_balance(user_id)
             await callback.message.edit_text(
                 f"<blockquote><b><tg-emoji emoji-id=\"5210952531676504517\">🎰</tg-emoji>"
-                f"Вы выиграли!</b></blockquote>\n\n"
+                f"Вы попали на мину!</b></blockquote>\n\n"
                 f"<blockquote>"
-                f"<tg-emoji emoji-id=\"5429651785352501917\">🎰</tg-emoji>Множитель: <b>x{mult}</b>\n"
-                f"<tg-emoji emoji-id=\"5305699699204837855\">🎰</tg-emoji>Выигрыш: "
-                f"<code>{winnings}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
-                f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>: "
+                f"<tg-emoji emoji-id=\"5447183459602669338\">🎰</tg-emoji>Потеряно: "
+                f"<code>{bet}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
+                f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>Баланс: "
                 f"<code>{balance:.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>"
-                f"</blockquote>",
+                f"</blockquote>\n\n"
+                f"<blockquote><b><i>Вы проиграли ставку! Это не повод сдаваться!</i></b></blockquote>",
                 parse_mode=ParseMode.HTML,
                 reply_markup=build_game_keyboard(session, game_over=True)
             )
-            await callback.answer("🏆 Победа!")
+            await callback.answer("💥Мина!")
+
         else:
-            await callback.message.edit_text(
-                game_text(session),
-                parse_mode=ParseMode.HTML,
-                reply_markup=build_game_keyboard(session)
-            )
-            await callback.answer(f"💎x{mult}")
+            # ГЕМ
+            session['gems_opened'] += 1
+            gems        = session['gems_opened']
+            mines_count = session['mines_count']
+            hidden      = HIDDEN_MINES.get(mines_count, 0)
+            total_safe  = GRID_SIZE * GRID_SIZE - mines_count - hidden
+            mult        = get_multiplier(mines_count, gems)
+
+            if gems == total_safe:
+                # ПОБЕДА — открыли все безопасные клетки
+                bet      = session['bet']
+
+                # Атомарно помечаем как завершённую
+                lock = _get_user_lock(user_id)
+                async with lock:
+                    if session.get('finishing'):
+                        return
+                    session['finishing'] = True
+                    _sessions.pop(user_id, None)
+
+                winnings = round(bet * mult, 2)
+                pay_storage.add_balance(user_id, winnings)
+                _cancel_timeout(user_id)
+                await state.clear()
+
+                # Записываем в лидерборд
+                name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
+                record_game_result(user_id, name, bet, winnings)
+
+                balance = pay_storage.get_balance(user_id)
+                await callback.message.edit_text(
+                    f"<blockquote><b><tg-emoji emoji-id=\"5210952531676504517\">🎰</tg-emoji>"
+                    f"Вы выиграли!</b></blockquote>\n\n"
+                    f"<blockquote>"
+                    f"<tg-emoji emoji-id=\"5429651785352501917\">🎰</tg-emoji>Множитель: <b>x{mult}</b>\n"
+                    f"<tg-emoji emoji-id=\"5305699699204837855\">🎰</tg-emoji>Выигрыш: "
+                    f"<code>{winnings}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
+                    f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>: "
+                    f"<code>{balance:.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>"
+                    f"</blockquote>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=build_game_keyboard(session, game_over=True)
+                )
+                await callback.answer("🏆 Победа!")
+            else:
+                await callback.message.edit_text(
+                    game_text(session),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=build_game_keyboard(session)
+                )
+                await callback.answer(f"💎x{mult}")
+
+    finally:
+        # Снимаем флаг "в обработке" с ячейки
+        session = _sessions.get(user_id)
+        if session:
+            session.get('processing_cells', set()).discard(idx)
 
 
 @mines_router.callback_query(F.data == "mines_cashout")
 async def mines_cashout(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
-    session = _sessions.get(user_id)
 
-    if not session:
-        await callback.answer("Игра не найдена.", show_alert=True)
-        return
+    # Берём локер — предотвращает двойной кэшаут
+    lock = _get_user_lock(user_id)
+    async with lock:
+        session = _sessions.get(user_id)
 
-    gems = session.get('gems_opened', 0)
-    if gems == 0:
-        await callback.answer("Сначала откройте хотя бы одну клетку!", show_alert=True)
-        return
+        if not session:
+            await callback.answer("Игра не найдена.", show_alert=True)
+            return
+
+        # Защита от двойного кэшаута
+        if session.get('finishing'):
+            await callback.answer()
+            return
+
+        gems = session.get('gems_opened', 0)
+        if gems == 0:
+            await callback.answer("Сначала откройте хотя бы одну клетку!", show_alert=True)
+            return
+
+        # Атомарно помечаем и удаляем сессию
+        session['finishing'] = True
+        _sessions.pop(user_id, None)
 
     mines_count = session['mines_count']
     bet         = session['bet']
@@ -566,7 +671,6 @@ async def mines_cashout(callback: CallbackQuery, state: FSMContext):
     winnings    = round(bet * mult, 2)
 
     pay_storage.add_balance(user_id, winnings)
-    _sessions.pop(user_id, None)
     _cancel_timeout(user_id)
     await state.clear()
 
@@ -647,36 +751,52 @@ async def process_mines_bet(message: Message, state: FSMContext, storage):
         )
         return
 
-    try:
-        bet = float(message.text.replace(',', '.'))
-    except ValueError:
-        await message.answer("Введите корректную сумму ставки.")
+    # Защита от двойной отправки ставки
+    bet_lock = _get_bet_lock(user_id)
+    if bet_lock.locked():
+        logging.warning(f"[mines] Двойная ставка заблокирована: user_id={user_id}")
         return
 
-    if bet < 0.1:
-        await message.answer("❌ Минимальная ставка: 0.1")
-        return
+    async with bet_lock:
+        # Повторная проверка внутри локера
+        if _has_active_game(user_id):
+            session = _sessions[user_id]
+            await message.answer(
+                _active_game_error_text(session),
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-    if bet > 10000:
-        await message.answer("❌ Максимальная ставка: 10000")
-        return
+        try:
+            bet = float(message.text.replace(',', '.'))
+        except ValueError:
+            await message.answer("Введите корректную сумму ставки.")
+            return
 
-    balance = storage.get_balance(user_id)
-    if bet > balance:
-        await message.answer(
-            f"<blockquote><b>❌ Недостаточно средств!</b></blockquote>\n\n",
-            parse_mode=ParseMode.HTML
-        )
-        return
+        if bet < 0.1:
+            await message.answer("❌ Минимальная ставка: 0.1")
+            return
 
-    storage.deduct_balance(user_id, bet)
+        if bet > 10000:
+            await message.answer("❌ Максимальная ставка: 10000")
+            return
 
-    # ✅ Начисляем реферальную комиссию (2% от ставки)
-    asyncio.create_task(notify_referrer_commission(user_id, bet))
+        balance = storage.get_balance(user_id)
+        if bet > balance:
+            await message.answer(
+                f"<blockquote><b>❌ Недостаточно средств!</b></blockquote>\n\n",
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-    session = _create_session(mines_count, bet, message.chat.id)
-    _sessions[user_id] = session
-    await state.set_state(MinesGame.playing)
+        storage.deduct_balance(user_id, bet)
+
+        # ✅ Начисляем реферальную комиссию (2% от ставки)
+        asyncio.create_task(notify_referrer_commission(user_id, bet))
+
+        session = _create_session(mines_count, bet, message.chat.id)
+        _sessions[user_id] = session
+        await state.set_state(MinesGame.playing)
 
     sent = await message.answer(
         game_text(session),
@@ -755,22 +875,38 @@ async def process_mines_command(message: Message, state: FSMContext, storage):
         )
         return
 
-    balance = storage.get_balance(user_id)
-    if bet > balance:
-        await message.answer(
-            f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
-            parse_mode=ParseMode.HTML
-        )
+    # Защита от двойной команды
+    bet_lock = _get_bet_lock(user_id)
+    if bet_lock.locked():
+        logging.warning(f"[mines] Двойная команда заблокирована: user_id={user_id}")
         return
 
-    storage.deduct_balance(user_id, bet)
+    async with bet_lock:
+        # Повторная проверка внутри локера
+        if _has_active_game(user_id):
+            session = _sessions[user_id]
+            await message.answer(
+                _active_game_error_text(session),
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-    # ✅ Начисляем реферальную комиссию (2% от ставки)
-    asyncio.create_task(notify_referrer_commission(user_id, bet))
+        balance = storage.get_balance(user_id)
+        if bet > balance:
+            await message.answer(
+                f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-    session = _create_session(mines_count, bet, message.chat.id)
-    _sessions[user_id] = session
-    await state.set_state(MinesGame.playing)
+        storage.deduct_balance(user_id, bet)
+
+        # ✅ Начисляем реферальную комиссию (2% от ставки)
+        asyncio.create_task(notify_referrer_commission(user_id, bet))
+
+        session = _create_session(mines_count, bet, message.chat.id)
+        _sessions[user_id] = session
+        await state.set_state(MinesGame.playing)
 
     sent = await message.answer(
         game_text(session),
