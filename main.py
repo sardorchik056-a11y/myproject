@@ -122,6 +122,19 @@ router = Router()
 # Экземпляр игры
 betting_game = None
 
+# Словарь владельцев сообщений — защита от нажатия чужих кнопок
+# message_id -> user_id (кто вызвал это сообщение)
+_msg_owners: dict = {}
+
+def _set_msg_owner(message_id: int, user_id: int):
+    _msg_owners[message_id] = user_id
+
+def _is_msg_owner(message_id: int, user_id: int) -> bool:
+    owner = _msg_owners.get(message_id)
+    if owner is None:
+        return True  # старое сообщение без записи — пускаем
+    return owner == user_id
+
 
 # ========== FSM ==========
 class PromoState(StatesGroup):
@@ -547,12 +560,13 @@ async def profile_callback(callback: CallbackQuery, state: FSMContext):
 
     update_user_name(storage, callback.from_user.id, callback.from_user.first_name or "")
 
-    await callback.message.edit_text(
+    msg = await callback.message.edit_text(
         get_profile_text(callback.from_user.first_name, days_in_project, callback.from_user.id),
         parse_mode=ParseMode.HTML,
         reply_markup=get_profile_menu(),
         disable_web_page_preview=True
     )
+    _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
@@ -626,6 +640,9 @@ async def handle_cancel_bet(callback: CallbackQuery, state: FSMContext):
 # ========== ПОПОЛНЕНИЕ (из профиля) ==========
 @router.callback_query(F.data == "deposit")
 async def deposit_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
+        return
     await state.clear()
     storage.set_pending(callback.from_user.id, 'deposit')
     await callback.message.edit_text(
@@ -640,6 +657,9 @@ async def deposit_callback(callback: CallbackQuery, state: FSMContext):
 # ========== ВЫВОД (из профиля) ==========
 @router.callback_query(F.data == "withdraw")
 async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
+        return
     await state.clear()
     storage.set_pending(callback.from_user.id, 'withdraw')
     await callback.message.edit_text(
