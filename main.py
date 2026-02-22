@@ -101,6 +101,13 @@ ADMIN_IDS = [8118184388]
 # Путь к файлу промокодов
 PROMO_FILE = "promos.json"
 
+# Лимиты перевода
+MIN_TRANSFER = 0.02
+MAX_TRANSFER = 10000
+
+# Паттерн для команды перевода (строго в начале строки, без лишнего текста)
+TRANSFER_PATTERN = re.compile(r'^(?:/)?(?:pay|дать)\s+([\d.,]+)$', re.IGNORECASE)
+
 # Роутер
 router = Router()
 
@@ -634,6 +641,96 @@ async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_cancel_menu()
     )
     await callback.answer()
+
+
+# ========== КОМАНДА ПЕРЕВОДА ==========
+@router.message(F.text.regexp(r'^(?:/)?(?:pay|дать)\s+[\d.,]+$', re.IGNORECASE))
+async def handle_transfer(message: Message, state: FSMContext):
+    # Проверяем, что это ответ на сообщение
+    if not message.reply_to_message:
+        await message.reply(
+            f'❌ <b>Команда должна быть ответом на сообщение игрока.</b>\n\n'
+            f'<blockquote>Ответьте на сообщение нужного игрока и введите команду:\n'
+            f'<code>дать 100</code> или <code>/pay 100</code></blockquote>',
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    target = message.reply_to_message.from_user
+
+    # Нельзя переводить самому себе
+    if target.id == message.from_user.id:
+        await message.reply(
+            "❌ <b>Нельзя переводить деньги самому себе.</b>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Нельзя переводить ботам
+    if target.is_bot:
+        await message.reply(
+            "❌ <b>Нельзя переводить деньги ботам.</b>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Парсим сумму
+    match = TRANSFER_PATTERN.match(message.text.strip())
+    if not match:
+        return
+
+    try:
+        amount = float(match.group(1).replace(',', '.'))
+    except ValueError:
+        await message.reply("❌ <b>Неверный формат суммы.</b>", parse_mode=ParseMode.HTML)
+        return
+
+    # Проверка лимитов
+    if amount < MIN_TRANSFER:
+        await message.reply(
+            f"❌ <b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code></b>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if amount > MAX_TRANSFER:
+        await message.reply(
+            f"❌ <b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code></b>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Проверка баланса отправителя
+    sender_balance = storage.get_balance(message.from_user.id)
+    if sender_balance < amount:
+        await message.reply(
+            f"❌ <b>Недостаточно средств.</b>\n\n"
+            f"<blockquote>"
+            f"💰 Ваш баланс: <code>{sender_balance:,.2f}</code>\n"
+            f"💸 Сумма перевода: <code>{amount:,.2f}</code>"
+            f"</blockquote>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    # Выполняем перевод
+    storage.get_user(target.id)
+    storage.add_balance(message.from_user.id, -amount)
+    storage.add_balance(target.id, amount)
+
+    target_name = target.first_name or "Игрок"
+
+    await message.reply(
+        f"✅ <b>Перевод выполнен!</b>\n\n"
+        f"<blockquote>"
+        f"💸 Вы отправили <code>{amount:,.2f}</code> игроку <b>{target_name}</b>"
+        f"</blockquote>",
+        parse_mode=ParseMode.HTML
+    )
+
+    logging.info(
+        f"Перевод: {message.from_user.id} → {target.id} | сумма: {amount}"
+    )
 
 
 # ========== ТЕКСТОВЫЕ СООБЩЕНИЯ ==========
