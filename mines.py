@@ -510,7 +510,7 @@ async def mines_exit(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     from main import get_games_menu, get_games_menu_text
     await callback.message.edit_text(
-        get_games_menu_text(user_id),
+        get_games_menu_text(caller_id),
         parse_mode="HTML",
         reply_markup=get_games_menu()
     )
