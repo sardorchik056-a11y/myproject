@@ -4,14 +4,13 @@ import os
 import re
 import json
 from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, Update, CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters.command import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiohttp import web
 
 # Импортируем модуль платежей
 from payments import payment_router, setup_payments, storage, MIN_DEPOSIT, MIN_WITHDRAWAL
@@ -45,14 +44,6 @@ from leaders import leaders_router, show_leaders, update_user_name
 
 # Настройки
 BOT_TOKEN = "8531951028:AAFWUlHwpWfRrD2MvT4BqtexO7nFsQwFpcA"
-WEBHOOK_PATH = "/webhook"
-PORT = int(os.getenv('PORT', 8080))
-RENDER_URL = os.getenv('RENDER_EXTERNAL_URL')
-
-if RENDER_URL:
-    WEBHOOK_URL = f"{RENDER_URL}{WEBHOOK_PATH}"
-else:
-    WEBHOOK_URL = f"https://myproject-f34u.onrender.com{WEBHOOK_PATH}"
 
 # ========== ССЫЛКИ ==========
 LINK_NEWS     = "https://t.me/FesteryNews"
@@ -914,19 +905,29 @@ async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== ЗАПУСК ==========
+# ========== ЗАПУСК (ПОЛЛИНГ) ==========
 async def main():
     global betting_game
 
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp  = Dispatcher(storage=MemoryStorage())
+    # Настройка логирования
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 
+    # Инициализация бота и диспетчера
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    dp = Dispatcher(storage=MemoryStorage())
+
+    # Получаем информацию о боте
     bot_info = await bot.get_me()
     os.environ["BOT_USERNAME"] = bot_info.username
     logging.info(f"Бот запущен как @{bot_info.username}")
 
+    # Инициализация игрового модуля
     betting_game = BettingGame(bot)
 
+    # Подключаем все роутеры
     dp.include_router(router)
     dp.include_router(mines_router)
     dp.include_router(tower_router)
@@ -934,42 +935,18 @@ async def main():
     dp.include_router(payment_router)
     dp.include_router(leaders_router)
 
+    # Настройка модулей
     setup_payments(bot)
     setup_referrals(bot)
 
+    # Удаляем вебхук (на всякий случай) и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(WEBHOOK_URL)
-
-    logging.info(f"Бот запущен на вебхуках: {WEBHOOK_URL}")
-
-    app = web.Application()
-
-    async def webhook_handler(request):
-        try:
-            json_data = await request.json()
-            update = Update.model_validate(json_data, context={"bot": bot})
-            await dp.feed_update(bot, update)
-            return web.Response(status=200)
-        except Exception as e:
-            logging.error(f"Ошибка при обработке вебхука: {e}")
-            return web.Response(status=500)
-
-    async def handle_index(request):
-        return web.Response(text="Бот работает!", content_type="text/html")
-
-    app.router.add_post(WEBHOOK_PATH, webhook_handler)
-    app.router.add_get("/", handle_index)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=PORT)
-
-    logging.info(f"Сервер запущен на порту {PORT}")
-    await site.start()
-
-    await asyncio.Event().wait()
+    
+    logging.info("Бот запущен в режиме поллинга")
+    
+    # Запускаем поллинг
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())
