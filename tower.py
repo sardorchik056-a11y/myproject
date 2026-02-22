@@ -88,10 +88,12 @@ def _check_owner(callback_user_id: int, session: dict) -> bool:
     return owner == 0 or callback_user_id == owner
 
 
-def _check_post_game_owner(user_id: int, callback_user_id: int) -> bool:
+def _check_post_game_owner(owner_user_id: int, callback_user_id: int) -> bool:
     """Проверяет владельца для post-game кнопок (когда сессии уже нет)."""
-    owner = _last_owner.get(user_id, 0)
-    return owner == 0 or callback_user_id == owner
+    owner = _last_owner.get(owner_user_id)
+    if owner is None:
+        return False
+    return callback_user_id == owner
 
 
 # ========== ТАЙМАУТ БЕЗДЕЙСТВИЯ ==========
@@ -424,12 +426,12 @@ async def tower_back_select(callback: CallbackQuery, state: FSMContext):
 @tower_router.callback_query(F.data == "tower_play_again")
 async def tower_play_again(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
-    user_id = callback.from_user.id
-    if not _check_post_game_owner(user_id, callback.from_user.id):
+    caller_id = callback.from_user.id
+    if not _check_post_game_owner(caller_id, caller_id):
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
-    _sessions.pop(user_id, None)
-    _cancel_timeout(user_id)
+    _sessions.pop(caller_id, None)
+    _cancel_timeout(caller_id)
     await state.clear()
     await show_tower_menu(callback, pay_storage)
 
@@ -437,17 +439,29 @@ async def tower_play_again(callback: CallbackQuery, state: FSMContext):
 @tower_router.callback_query(F.data == "tower_exit")
 async def tower_exit(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
-    user_id = callback.from_user.id
-    # Проверяем владельца — через активную сессию или через _last_owner
-    session = _sessions.get(user_id)
-    if session and not _check_owner(callback.from_user.id, session):
-        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
-        return
-    if not session and not _check_post_game_owner(user_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
-        return
-    _sessions.pop(user_id, None)
-    _cancel_timeout(user_id)
+    caller_id = callback.from_user.id
+
+    session = _sessions.get(caller_id)
+    owner_id = caller_id
+
+    if not session:
+        for oid, s in list(_sessions.items()):
+            if s.get('owner_id') == caller_id:
+                session = s
+                owner_id = oid
+                break
+
+    if session:
+        if not _check_owner(caller_id, session):
+            await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+            return
+        _sessions.pop(owner_id, None)
+        _cancel_timeout(owner_id)
+    else:
+        if not _check_post_game_owner(caller_id, caller_id):
+            await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+            return
+
     await state.clear()
     from main import get_games_menu, get_games_menu_text
     await callback.message.edit_text(
