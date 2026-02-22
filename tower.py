@@ -47,10 +47,10 @@ DIFFICULTY_EMOJI = {1: "🟢", 2: "🟡", 3: "🔴", 4: "💀"}
 
 # Множители по этажам [этаж1, этаж2, ..., этаж6] для каждой сложности
 TOWER_MULTIPLIERS = {
-    1: [1.19, 1.45, 1.77, 2.11, 2.79, 3.55],   # 1 бомба из 5 (~80% шанс)
-    2: [1.45, 2.35, 4.04, 7.11, 11.39, 19.26],   # 2 бомбы из 5 (~60% шанс)
-    3: [2.0, 5.8, 14.0, 38.0, 76.2, 121.7],  # 3 бомбы из 5 (~40% шанс)
-    4: [4.15, 22.2, 111.5, 297.0, 1235.0, 4144.0], # 4 бомбы из 5 (~20% шанс)
+    1: [1.19, 1.45, 1.77, 2.11, 2.79, 3.55],
+    2: [1.45, 2.35, 4.04, 7.11, 11.39, 19.26],
+    3: [2.0, 5.8, 14.0, 38.0, 76.2, 121.7],
+    4: [4.15, 22.2, 111.5, 297.0, 1235.0, 4144.0],
 }
 
 
@@ -63,6 +63,22 @@ class TowerGame(StatesGroup):
 tower_router = Router()
 _sessions: dict      = {}  # user_id -> session dict
 _timeout_tasks: dict = {}  # user_id -> asyncio.Task
+
+# ========== ЗАЩИТА ОТ ДУБЛЕЙ ==========
+_user_locks: dict = {}   # user_id -> asyncio.Lock — для ячеек/кэшаута/таймаута
+_bet_locks: dict  = {}   # user_id -> asyncio.Lock — для создания ставки
+
+
+def _get_user_lock(user_id: int) -> asyncio.Lock:
+    if user_id not in _user_locks:
+        _user_locks[user_id] = asyncio.Lock()
+    return _user_locks[user_id]
+
+
+def _get_bet_lock(user_id: int) -> asyncio.Lock:
+    if user_id not in _bet_locks:
+        _bet_locks[user_id] = asyncio.Lock()
+    return _bet_locks[user_id]
 
 
 # ========== ТАЙМАУТ БЕЗДЕЙСТВИЯ ==========
@@ -85,9 +101,14 @@ async def _inactivity_watcher(user_id: int, bot: Bot, storage):
     except asyncio.CancelledError:
         return
 
-    session = _sessions.pop(user_id, None)
-    if session is None:
-        return
+    lock = _get_user_lock(user_id)
+    async with lock:
+        session = _sessions.pop(user_id, None)
+        if session is None:
+            return
+        if session.get('finishing'):
+            return
+        session['finishing'] = True
 
     # Возвращаем ставку при таймауте
     bet = session.get('bet', 0)
@@ -170,16 +191,18 @@ def _create_session(difficulty: int, bet: float, chat_id: int) -> dict:
         bomb_cols = random.sample(range(CELLS), bombs)
         floors.append({
             'bomb_cols': bomb_cols,
-            'chosen':    None,  # индекс выбранной ячейки игроком
+            'chosen':    None,
         })
     return {
-        'difficulty':    difficulty,
-        'bet':           bet,
-        'current_floor': 0,     # 0-based, активный этаж для нажатия
-        'floors_passed': 0,     # сколько этажей пройдено
-        'floors':        floors,
-        'message_id':    None,
-        'chat_id':       chat_id,
+        'difficulty':        difficulty,
+        'bet':               bet,
+        'current_floor':     0,
+        'floors_passed':     0,
+        'floors':            floors,
+        'message_id':        None,
+        'chat_id':           chat_id,
+        'finishing':         False,   # флаг завершения — защита от двойного кэшаута/взрыва
+        'processing_cells':  set(),   # ячейки в обработке — защита от двойного клика
     }
 
 
@@ -192,7 +215,6 @@ def build_tower_keyboard(session: dict, game_over: bool = False) -> InlineKeyboa
     floors        = session['floors']
     rows          = []
 
-    # Отображаем этажи сверху вниз: этаж 6 (индекс 5) наверху, этаж 1 (индекс 0) внизу
     for floor_idx in range(FLOORS - 1, -1, -1):
         floor_data = floors[floor_idx]
         chosen     = floor_data['chosen']
@@ -200,37 +222,33 @@ def build_tower_keyboard(session: dict, game_over: bool = False) -> InlineKeyboa
         mult       = TOWER_MULTIPLIERS[difficulty][floor_idx]
         btn_row    = []
 
-        # Первая кнопка — множитель этажа (не кликабельна)
         btn_row.append(InlineKeyboardButton(
             text=f"x{mult}",
             callback_data="tower_noop"
         ))
 
         if game_over:
-            # ===== РЕЖИМ ПРОИГРЫША: полное раскрытие ВСЕХ этажей =====
             for col in range(CELLS):
                 is_bomb = col in bomb_cols
                 if col == chosen and is_bomb:
-                    text = CELL_EXPLODE      # игрок нажал на бомбу
+                    text = CELL_EXPLODE
                 elif is_bomb:
-                    text = CELL_BOMB         # остальные бомбы
+                    text = CELL_BOMB
                 elif col == chosen:
-                    text = CELL_CHOSEN_SAFE  # выбранная безопасная (пройденные этажи)
+                    text = CELL_CHOSEN_SAFE
                 else:
-                    text = CELL_SAFE_REVEAL  # пустая безопасная ячейка
+                    text = CELL_SAFE_REVEAL
                 btn_row.append(InlineKeyboardButton(text=text, callback_data="tower_noop"))
 
         elif floor_idx < current_floor:
-            # ===== ПРОЙДЕННЫЙ ЭТАЖ =====
             for col in range(CELLS):
                 if col == chosen:
-                    text = CELL_CHOSEN_SAFE  # 💎 выбранная ячейка
+                    text = CELL_CHOSEN_SAFE
                 else:
-                    text = CELL_OTHER_SAFE   # ⬜ остальные (были безопасными)
+                    text = CELL_OTHER_SAFE
                 btn_row.append(InlineKeyboardButton(text=text, callback_data="tower_noop"))
 
         elif floor_idx == current_floor:
-            # ===== АКТИВНЫЙ ЭТАЖ: кликабельные ячейки =====
             for col in range(CELLS):
                 btn_row.append(InlineKeyboardButton(
                     text=CELL_ACTIVE,
@@ -238,13 +256,11 @@ def build_tower_keyboard(session: dict, game_over: bool = False) -> InlineKeyboa
                 ))
 
         else:
-            # ===== БУДУЩИЙ ЭТАЖ: заблокирован =====
             for col in range(CELLS):
                 btn_row.append(InlineKeyboardButton(text=CELL_FUTURE, callback_data="tower_noop"))
 
         rows.append(btn_row)
 
-    # Кнопки управления
     if not game_over:
         ctrl = []
         if floors_passed > 0:
@@ -299,12 +315,12 @@ def build_tower_select_keyboard() -> InlineKeyboardMarkup:
 
 
 def game_text(session: dict) -> str:
-    diff         = session['difficulty']
-    bet          = session['bet']
+    diff          = session['difficulty']
+    bet           = session['bet']
     floors_passed = session['floors_passed']
-    mult         = get_multiplier(diff, floors_passed)
-    next_mult    = get_next_mult(diff, floors_passed)
-    floor_num    = session['current_floor'] + 1  # человекочитаемый номер
+    mult          = get_multiplier(diff, floors_passed)
+    next_mult     = get_next_mult(diff, floors_passed)
+    floor_num     = session['current_floor'] + 1
 
     return (
         f"<blockquote><b>🏰 Башня</b></blockquote>\n\n"
@@ -427,7 +443,6 @@ async def tower_cell_handler(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
 
-    # tower_cell_{floor_idx}_{col}
     parts     = callback.data.split("_")
     floor_idx = int(parts[2])
     col       = int(parts[3])
@@ -437,117 +452,189 @@ async def tower_cell_handler(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
         return
 
+    # Защита: игра уже завершается
+    if session.get('finishing'):
+        await callback.answer()
+        return
+
     # Защита от нажатия не на активный этаж
     if floor_idx != session['current_floor']:
         await callback.answer()
         return
 
-    # Перезапускаем таймер бездействия
-    _start_timeout(user_id, callback.bot, pay_storage)
+    # Защита от одновременного нажатия на одну ячейку
+    processing = session.setdefault('processing_cells', set())
+    if col in processing:
+        await callback.answer()
+        return
 
-    floor_data = session['floors'][floor_idx]
-    bomb_cols  = floor_data['bomb_cols']
-    floor_data['chosen'] = col
+    # Берём персональный локер
+    lock = _get_user_lock(user_id)
+    async with lock:
+        # Повторные проверки внутри локера
+        session = _sessions.get(user_id)
+        if not session:
+            await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
+            return
 
-    if col in bomb_cols:
-        # ===== БОМБА =====
-        bet = session['bet']
-        _sessions.pop(user_id, None)
-        _cancel_timeout(user_id)
-        await state.clear()
+        if session.get('finishing'):
+            await callback.answer()
+            return
 
-        # Записываем в лидерборд: проигрыш
-        name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
-        record_game_result(user_id, name, bet, 0.0)
+        if floor_idx != session['current_floor']:
+            await callback.answer()
+            return
 
-        balance = pay_storage.get_balance(user_id)
-        await callback.message.edit_text(
-            f"<blockquote><b><tg-emoji emoji-id=\"5210952531676504517\">🎰</tg-emoji>"
-            f"Вы попали на бомбу!</b></blockquote>\n\n"
-            f"<blockquote>"
-            f"<tg-emoji emoji-id=\"5447183459602669338\">🎰</tg-emoji>Потеряно: "
-            f"<code>{bet}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
-            f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>Баланс: "
-            f"<code>{balance:.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>"
-            f"</blockquote>\n\n"
-            f"<blockquote><b><i>Башня рухнула! Попробуйте снова!</i></b></blockquote>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=build_tower_keyboard(session, game_over=True)
-        )
-        await callback.answer("💥 Бомба!")
+        processing = session.setdefault('processing_cells', set())
+        if col in processing:
+            await callback.answer()
+            return
 
-    else:
-        # ===== БЕЗОПАСНО =====
-        session['floors_passed'] += 1
-        session['current_floor'] += 1
-        floors_passed = session['floors_passed']
-        difficulty    = session['difficulty']
-        mult          = get_multiplier(difficulty, floors_passed)
+        # Помечаем ячейку как "в обработке"
+        processing.add(col)
 
-        if session['current_floor'] >= FLOORS:
-            # ===== ПОБЕДА — все этажи пройдены =====
-            bet      = session['bet']
-            winnings = round(bet * mult, 2)
-            pay_storage.add_balance(user_id, winnings)
-            _sessions.pop(user_id, None)
+    try:
+        # Перезапускаем таймер бездействия
+        _start_timeout(user_id, callback.bot, pay_storage)
+
+        floor_data = session['floors'][floor_idx]
+        bomb_cols  = floor_data['bomb_cols']
+        floor_data['chosen'] = col
+
+        if col in bomb_cols:
+            # ===== БОМБА =====
+            bet = session['bet']
+
+            # Атомарно помечаем и удаляем сессию
+            lock = _get_user_lock(user_id)
+            async with lock:
+                if session.get('finishing'):
+                    return
+                session['finishing'] = True
+                _sessions.pop(user_id, None)
+
             _cancel_timeout(user_id)
             await state.clear()
 
-            # Записываем в лидерборд: победа
+            # Записываем в лидерборд: проигрыш
             name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
-            record_game_result(user_id, name, bet, winnings)
+            record_game_result(user_id, name, bet, 0.0)
 
             balance = pay_storage.get_balance(user_id)
             await callback.message.edit_text(
-                f"<blockquote><b><tg-emoji emoji-id=\"5461151367559141950\">🎰</tg-emoji>"
-                f"Вы прошли все этажи!</b></blockquote>\n\n"
+                f"<blockquote><b><tg-emoji emoji-id=\"5210952531676504517\">🎰</tg-emoji>"
+                f"Вы попали на бомбу!</b></blockquote>\n\n"
                 f"<blockquote>"
-                f"<tg-emoji emoji-id=\"5429651785352501917\">🎰</tg-emoji>Множитель: <b>x{mult}</b>\n"
-                f"<tg-emoji emoji-id=\"5305699699204837855\">🎰</tg-emoji>Выигрыш: "
-                f"<code>{winnings}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
-                f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>: "
+                f"<tg-emoji emoji-id=\"5447183459602669338\">🎰</tg-emoji>Потеряно: "
+                f"<code>{bet}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
+                f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>Баланс: "
                 f"<code>{balance:.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>"
-                f"</blockquote>",
+                f"</blockquote>\n\n"
+                f"<blockquote><b><i>Башня рухнула! Попробуйте снова!</i></b></blockquote>",
                 parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text="Играть снова",
-                        callback_data="tower_menu",
-                        icon_custom_emoji_id=EMOJI_3POINT
-                    )],
-                    [InlineKeyboardButton(
-                        text="Выйти",
-                        callback_data="games",
-                        icon_custom_emoji_id=EMOJI_BACK
-                    )],
-                ])
+                reply_markup=build_tower_keyboard(session, game_over=True)
             )
-            await callback.answer("🏆 Победа!")
+            await callback.answer("💥 Бомба!")
 
         else:
-            # Следующий этаж
-            await callback.message.edit_text(
-                game_text(session),
-                parse_mode=ParseMode.HTML,
-                reply_markup=build_tower_keyboard(session)
-            )
-            await callback.answer(f"✅ x{mult}")
+            # ===== БЕЗОПАСНО =====
+            session['floors_passed'] += 1
+            session['current_floor'] += 1
+            floors_passed = session['floors_passed']
+            difficulty    = session['difficulty']
+            mult          = get_multiplier(difficulty, floors_passed)
+
+            if session['current_floor'] >= FLOORS:
+                # ===== ПОБЕДА — все этажи пройдены =====
+                bet = session['bet']
+
+                # Атомарно помечаем и удаляем сессию
+                lock = _get_user_lock(user_id)
+                async with lock:
+                    if session.get('finishing'):
+                        return
+                    session['finishing'] = True
+                    _sessions.pop(user_id, None)
+
+                winnings = round(bet * mult, 2)
+                pay_storage.add_balance(user_id, winnings)
+                _cancel_timeout(user_id)
+                await state.clear()
+
+                # Записываем в лидерборд: победа
+                name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
+                record_game_result(user_id, name, bet, winnings)
+
+                balance = pay_storage.get_balance(user_id)
+                await callback.message.edit_text(
+                    f"<blockquote><b><tg-emoji emoji-id=\"5461151367559141950\">🎰</tg-emoji>"
+                    f"Вы прошли все этажи!</b></blockquote>\n\n"
+                    f"<blockquote>"
+                    f"<tg-emoji emoji-id=\"5429651785352501917\">🎰</tg-emoji>Множитель: <b>x{mult}</b>\n"
+                    f"<tg-emoji emoji-id=\"5305699699204837855\">🎰</tg-emoji>Выигрыш: "
+                    f"<code>{winnings}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
+                    f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>: "
+                    f"<code>{balance:.2f}</code><tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>"
+                    f"</blockquote>",
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="Играть снова",
+                            callback_data="tower_menu",
+                            icon_custom_emoji_id=EMOJI_3POINT
+                        )],
+                        [InlineKeyboardButton(
+                            text="Выйти",
+                            callback_data="games",
+                            icon_custom_emoji_id=EMOJI_BACK
+                        )],
+                    ])
+                )
+                await callback.answer("🏆 Победа!")
+
+            else:
+                # Следующий этаж
+                await callback.message.edit_text(
+                    game_text(session),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=build_tower_keyboard(session)
+                )
+                await callback.answer(f"✅ x{mult}")
+
+    finally:
+        # Снимаем флаг "в обработке" с ячейки
+        session = _sessions.get(user_id)
+        if session:
+            session.get('processing_cells', set()).discard(col)
 
 
 @tower_router.callback_query(F.data == "tower_cashout")
 async def tower_cashout(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
-    session = _sessions.get(user_id)
 
-    if not session:
-        await callback.answer("Игра не найдена.", show_alert=True)
-        return
+    # Берём локер — предотвращает двойной кэшаут
+    lock = _get_user_lock(user_id)
+    async with lock:
+        session = _sessions.get(user_id)
 
-    floors_passed = session['floors_passed']
-    if floors_passed == 0:
-        await callback.answer("Сначала пройдите хотя бы один этаж!", show_alert=True)
-        return
+        if not session:
+            await callback.answer("Игра не найдена.", show_alert=True)
+            return
+
+        # Защита от двойного кэшаута
+        if session.get('finishing'):
+            await callback.answer()
+            return
+
+        floors_passed = session['floors_passed']
+        if floors_passed == 0:
+            await callback.answer("Сначала пройдите хотя бы один этаж!", show_alert=True)
+            return
+
+        # Атомарно помечаем и удаляем сессию
+        session['finishing'] = True
+        _sessions.pop(user_id, None)
 
     difficulty = session['difficulty']
     bet        = session['bet']
@@ -555,7 +642,6 @@ async def tower_cashout(callback: CallbackQuery, state: FSMContext):
     winnings   = round(bet * mult, 2)
 
     pay_storage.add_balance(user_id, winnings)
-    _sessions.pop(user_id, None)
     _cancel_timeout(user_id)
     await state.clear()
 
@@ -607,35 +693,48 @@ async def process_tower_bet(message: Message, state: FSMContext, storage):
         await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
         return
 
-    try:
-        bet = float(message.text.replace(',', '.'))
-    except ValueError:
-        await message.answer("Введите корректную сумму ставки.")
+    # Защита от двойной отправки ставки
+    bet_lock = _get_bet_lock(user_id)
+    if bet_lock.locked():
+        logging.warning(f"[tower] Двойная ставка заблокирована: user_id={user_id}")
         return
 
-    if bet < 0.1:
-        await message.answer("❌ Минимальная ставка: 0.1")
-        return
-    if bet > 10000:
-        await message.answer("❌ Максимальная ставка: 10000")
-        return
+    async with bet_lock:
+        # Повторная проверка внутри локера
+        if _has_active_game(user_id):
+            session = _sessions[user_id]
+            await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
+            return
 
-    balance = storage.get_balance(user_id)
-    if bet > balance:
-        await message.answer(
-            f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
-            parse_mode=ParseMode.HTML
-        )
-        return
+        try:
+            bet = float(message.text.replace(',', '.'))
+        except ValueError:
+            await message.answer("Введите корректную сумму ставки.")
+            return
 
-    storage.deduct_balance(user_id, bet)
+        if bet < 0.1:
+            await message.answer("❌ Минимальная ставка: 0.1")
+            return
+        if bet > 10000:
+            await message.answer("❌ Максимальная ставка: 10000")
+            return
 
-    # ✅ Начисляем реферальную комиссию (2% от ставки)
-    asyncio.create_task(notify_referrer_commission(user_id, bet))
+        balance = storage.get_balance(user_id)
+        if bet > balance:
+            await message.answer(
+                f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-    session = _create_session(difficulty, bet, message.chat.id)
-    _sessions[user_id] = session
-    await state.set_state(TowerGame.playing)
+        storage.deduct_balance(user_id, bet)
+
+        # ✅ Начисляем реферальную комиссию (2% от ставки)
+        asyncio.create_task(notify_referrer_commission(user_id, bet))
+
+        session = _create_session(difficulty, bet, message.chat.id)
+        _sessions[user_id] = session
+        await state.set_state(TowerGame.playing)
 
     sent = await message.answer(
         game_text(session),
@@ -652,7 +751,7 @@ async def process_tower_command(message: Message, state: FSMContext, storage):
     """
     Обрабатывает команды:
       /tower 0.5 1  |  tower 0.5 2  |  /башня 1.0 3  |  башня 0.5 1
-    Сложность: 1 (лёгкий), 2 (средний), 3 (сложный)
+    Сложность: 1 (лёгкий), 2 (средний), 3 (сложный), 4 (безумный)
     """
     text  = message.text.strip()
     match = re.match(
@@ -698,27 +797,41 @@ async def process_tower_command(message: Message, state: FSMContext, storage):
 
     user_id = message.from_user.id
 
+    # Блокируем если уже есть активная игра
     if _has_active_game(user_id):
         session = _sessions[user_id]
         await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
         return
 
-    balance = storage.get_balance(user_id)
-    if bet > balance:
-        await message.answer(
-            f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
-            parse_mode=ParseMode.HTML
-        )
+    # Защита от двойной команды
+    bet_lock = _get_bet_lock(user_id)
+    if bet_lock.locked():
+        logging.warning(f"[tower] Двойная команда заблокирована: user_id={user_id}")
         return
 
-    storage.deduct_balance(user_id, bet)
+    async with bet_lock:
+        # Повторная проверка внутри локера
+        if _has_active_game(user_id):
+            session = _sessions[user_id]
+            await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
+            return
 
-    # ✅ Начисляем реферальную комиссию (2% от ставки)
-    asyncio.create_task(notify_referrer_commission(user_id, bet))
+        balance = storage.get_balance(user_id)
+        if bet > balance:
+            await message.answer(
+                f"<blockquote><b><tg-emoji emoji-id=\"5447183459602669338\">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n",
+                parse_mode=ParseMode.HTML
+            )
+            return
 
-    session = _create_session(difficulty, bet, message.chat.id)
-    _sessions[user_id] = session
-    await state.set_state(TowerGame.playing)
+        storage.deduct_balance(user_id, bet)
+
+        # ✅ Начисляем реферальную комиссию (2% от ставки)
+        asyncio.create_task(notify_referrer_commission(user_id, bet))
+
+        session = _create_session(difficulty, bet, message.chat.id)
+        _sessions[user_id] = session
+        await state.set_state(TowerGame.playing)
 
     sent = await message.answer(
         game_text(session),
