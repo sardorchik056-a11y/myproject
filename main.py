@@ -108,6 +108,14 @@ MAX_TRANSFER = 10000
 # Паттерн для команды перевода (строго в начале строки, без лишнего текста)
 TRANSFER_PATTERN = re.compile(r'^(?:/)?(?:pay|дать)\s+([\d.,]+)$', re.IGNORECASE)
 
+# Локеры для переводов — защита от двойной отправки
+_transfer_locks: dict = {}  # user_id -> asyncio.Lock
+
+def _get_transfer_lock(user_id: int) -> asyncio.Lock:
+    if user_id not in _transfer_locks:
+        _transfer_locks[user_id] = asyncio.Lock()
+    return _transfer_locks[user_id]
+
 # Роутер
 router = Router()
 
@@ -649,9 +657,9 @@ async def handle_transfer(message: Message, state: FSMContext):
     # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
         await message.reply(
-            f'❌<b>Команда должна быть ответом на сообщение игрока!</b>\n\n'
-            f'<blockquote><i>Ответьте на сообщение нужного игрока и введите команду:\n'
-            f'<code>дать 100</code> или <code>/pay 100</code></i></blockquote>',
+            f'❌ <b>Команда должна быть ответом на сообщение игрока.</b>\n\n'
+            f'<blockquote>Ответьте на сообщение нужного игрока и введите команду:\n'
+            f'<code>дать 100</code> или <code>/pay 100</code></blockquote>',
             parse_mode=ParseMode.HTML
         )
         return
@@ -661,7 +669,7 @@ async def handle_transfer(message: Message, state: FSMContext):
     # Нельзя переводить самому себе
     if target.id == message.from_user.id:
         await message.reply(
-            "<blockquote>❌<b>Нельзя переводить самому себе!</b></blockquote>",
+            "❌ <b>Нельзя переводить деньги самому себе.</b>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -669,7 +677,7 @@ async def handle_transfer(message: Message, state: FSMContext):
     # Нельзя переводить ботам
     if target.is_bot:
         await message.reply(
-            "<blockquote>❌<b>Нельзя переводить ботам!</b></blockquote>",
+            "❌ <b>Нельзя переводить деньги ботам.</b>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -682,20 +690,20 @@ async def handle_transfer(message: Message, state: FSMContext):
     try:
         amount = float(match.group(1).replace(',', '.'))
     except ValueError:
-        await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML)
+        await message.reply("❌ <b>Неверный формат суммы.</b>", parse_mode=ParseMode.HTML)
         return
 
     # Проверка лимитов
     if amount < MIN_TRANSFER:
         await message.reply(
-            f"<blockquote>❌<b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code> <tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji></b></blockquote>",
+            f"❌ <b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code></b>",
             parse_mode=ParseMode.HTML
         )
         return
 
     if amount > MAX_TRANSFER:
         await message.reply(
-            f"<blockquote>❌<b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code> <tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji></b></blockquote>",
+            f"❌ <b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code></b>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -704,22 +712,43 @@ async def handle_transfer(message: Message, state: FSMContext):
     sender_balance = storage.get_balance(message.from_user.id)
     if sender_balance < amount:
         await message.reply(
-            "<blockquote>❌<b>Недостаточно средств!</b></blockquote>",
+            f"❌ <b>Недостаточно средств.</b>\n\n"
+            f"<blockquote>"
+            f"💰 Ваш баланс: <code>{sender_balance:,.2f}</code>\n"
+            f"💸 Сумма перевода: <code>{amount:,.2f}</code>"
+            f"</blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
 
-    # Выполняем перевод
-    storage.get_user(target.id)
-    storage.add_balance(message.from_user.id, -amount)
-    storage.add_balance(target.id, amount)
+    # Выполняем перевод атомарно — защита от двойной отправки
+    lock = _get_transfer_lock(message.from_user.id)
+    if lock.locked():
+        await message.reply(
+            "<blockquote>⏳<b>Перевод уже обрабатывается. Подождите.</b></blockquote>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    async with lock:
+        # Повторная проверка баланса внутри локера
+        sender_balance_now = storage.get_balance(message.from_user.id)
+        if sender_balance_now < amount:
+            await message.reply(
+                "<blockquote>❌<b>Недостаточно средств!</b></blockquote>",
+                parse_mode=ParseMode.HTML
+            )
+            return
+        storage.get_user(target.id)
+        storage.add_balance(message.from_user.id, -amount)
+        storage.add_balance(target.id, amount)
 
     target_name = target.first_name or "Игрок"
 
     await message.reply(
-        f"<tg-emoji emoji-id=\"5206607081334906820\">💰</tg-emoji><b>Перевод выполнен!</b>\n\n"
+        f"✅ <b>Перевод выполнен!</b>\n\n"
         f"<blockquote>"
-        f"<tg-emoji emoji-id=\"5195033767969839232\">💰</tg-emoji>Вы отправили <code>{amount:,.2f}</code> <tg-emoji emoji-id=\"5197434882321567830\">💰</tg-emoji> игроку <b>{target_name}</b>"
+        f"💸 Вы отправили <code>{amount:,.2f}</code> игроку <b>{target_name}</b>"
         f"</blockquote>",
         parse_mode=ParseMode.HTML
     )
