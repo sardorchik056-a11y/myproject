@@ -88,7 +88,8 @@ _user_locks: dict = {}          # user_id -> asyncio.Lock
 # Обработанные клетки в текущей сессии хранятся прямо в session['processing_cells']
 # Кэшауты/завершения игры — флаг в session['finishing']
 # Ставки в процессе создания — предотвращают двойную ставку
-_bet_locks: dict = {}           # user_id -> asyncio.Lock
+_bet_locks: dict    = {}        # user_id -> asyncio.Lock — для создания ставки
+_last_owner: dict   = {}        # user_id -> int — владелец последней игры (для post-game кнопок)
 _bet_in_progress: set = set()   # user_id — ставка сейчас обрабатывается
 
 
@@ -104,6 +105,18 @@ def _get_bet_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _bet_locks:
         _bet_locks[user_id] = asyncio.Lock()
     return _bet_locks[user_id]
+
+
+def _check_owner(callback_user_id: int, session: dict) -> bool:
+    """Проверяет что нажавший кнопку — владелец игры."""
+    owner = session.get('owner_id', 0)
+    return owner == 0 or callback_user_id == owner
+
+
+def _check_post_game_owner(user_id: int, callback_user_id: int) -> bool:
+    """Проверяет владельца для post-game кнопок (когда сессии уже нет)."""
+    owner = _last_owner.get(user_id, 0)
+    return owner == 0 or callback_user_id == owner
 
 
 # ========== ТАЙМАУТ БЕЗДЕЙСТВИЯ ==========
@@ -334,7 +347,7 @@ def game_text(session: dict) -> str:
 
 # ========== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ СОЗДАНИЯ СЕССИИ ==========
 
-def _create_session(mines_count: int, bet: float, chat_id: int) -> dict:
+def _create_session(mines_count: int, bet: float, chat_id: int, owner_id: int = 0) -> dict:
     board, real_positions = generate_board(mines_count)
     return {
         'board':            board,
@@ -344,10 +357,11 @@ def _create_session(mines_count: int, bet: float, chat_id: int) -> dict:
         'bet':              bet,
         'gems_opened':      0,
         'exploded_idx':     -1,
-        'message_id':       None,   # заполняется после отправки
+        'message_id':       None,
         'chat_id':          chat_id,
-        'finishing':        False,  # флаг завершения — защита от двойного кэшаута
-        'processing_cells': set(),  # ячейки которые сейчас обрабатываются — защита от двойного клика
+        'owner_id':         owner_id,
+        'finishing':        False,
+        'processing_cells': set(),
     }
 
 
@@ -449,6 +463,9 @@ async def mines_manual_handler(callback: CallbackQuery, state: FSMContext):
 async def mines_play_again(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
+    if not _check_post_game_owner(user_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
     _sessions.pop(user_id, None)
     _cancel_timeout(user_id)
     await state.clear()
@@ -459,6 +476,14 @@ async def mines_play_again(callback: CallbackQuery, state: FSMContext):
 async def mines_exit(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
+    # Проверяем владельца — через активную сессию или через _last_owner
+    session = _sessions.get(user_id)
+    if session and not _check_owner(callback.from_user.id, session):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
+    if not session and not _check_post_game_owner(user_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
     _sessions.pop(user_id, None)
     _cancel_timeout(user_id)
     await state.clear()
@@ -485,6 +510,11 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
     session = _sessions.get(user_id)
     if not session:
         await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
+        return
+
+    # Защита: чужая игра
+    if not _check_owner(callback.from_user.id, session):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
 
     # Защита: игра уже завершается
@@ -651,6 +681,11 @@ async def mines_cashout(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Игра не найдена.", show_alert=True)
             return
 
+        # Защита: чужая игра
+        if not _check_owner(callback.from_user.id, session):
+            await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+            return
+
         # Защита от двойного кэшаута
         if session.get('finishing'):
             await callback.answer()
@@ -794,8 +829,9 @@ async def process_mines_bet(message: Message, state: FSMContext, storage):
         # ✅ Начисляем реферальную комиссию (2% от ставки)
         asyncio.create_task(notify_referrer_commission(user_id, bet))
 
-        session = _create_session(mines_count, bet, message.chat.id)
+        session = _create_session(mines_count, bet, message.chat.id, user_id)
         _sessions[user_id] = session
+        _last_owner[user_id] = user_id
         await state.set_state(MinesGame.playing)
 
     sent = await message.answer(
@@ -904,8 +940,9 @@ async def process_mines_command(message: Message, state: FSMContext, storage):
         # ✅ Начисляем реферальную комиссию (2% от ставки)
         asyncio.create_task(notify_referrer_commission(user_id, bet))
 
-        session = _create_session(mines_count, bet, message.chat.id)
+        session = _create_session(mines_count, bet, message.chat.id, user_id)
         _sessions[user_id] = session
+        _last_owner[user_id] = user_id
         await state.set_state(MinesGame.playing)
 
     sent = await message.answer(
