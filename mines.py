@@ -499,6 +499,11 @@ async def mines_exit(callback: CallbackQuery, state: FSMContext):
         if not _check_owner(caller_id, session):
             await callback.answer("🚫 Это не ваша игра!", show_alert=True)
             return
+        # Возвращаем ставку если игра была активна (не завершена)
+        if not session.get('finishing'):
+            bet = session.get('bet', 0)
+            if bet > 0:
+                pay_storage.add_balance(owner_id, bet)
         _sessions.pop(owner_id, None)
         _cancel_timeout(owner_id)
     else:
