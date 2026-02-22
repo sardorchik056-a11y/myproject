@@ -644,7 +644,7 @@ async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
 
 
 # ========== КОМАНДА ПЕРЕВОДА ==========
-@router.message(F.text.regexp(r'^(?:/)?(?:pay|дать)\s+[\d.,]+$', re.IGNORECASE))
+@router.message(F.text.regexp(r'(?i)^(?:/)?(?:pay|дать)\s+[\d.,]+$'))
 async def handle_transfer(message: Message, state: FSMContext):
     # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
