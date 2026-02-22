@@ -44,7 +44,7 @@ from referrals import (
 from leaders import leaders_router, show_leaders, update_user_name
 
 # Настройки
-BOT_TOKEN = "8586332532:AAHX758cf6iOUpPNpY2sqseGBYsKJo9js4U"
+BOT_TOKEN = "8531951028:AAFWUlHwpWfRrD2MvT4BqtexO7nFsQwFpcA"
 WEBHOOK_PATH = "/webhook"
 PORT = int(os.getenv('PORT', 8080))
 RENDER_URL = os.getenv('RENDER_EXTERNAL_URL')
