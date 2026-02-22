@@ -649,9 +649,9 @@ async def handle_transfer(message: Message, state: FSMContext):
     # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
         await message.reply(
-            f'❌ <b>Команда должна быть ответом на сообщение игрока.</b>\n\n'
-            f'<blockquote>Ответьте на сообщение нужного игрока и введите команду:\n'
-            f'<code>дать 100</code> или <code>/pay 100</code></blockquote>',
+            f'❌<b>Команда должна быть ответом на сообщение игрока!</b>\n\n'
+            f'<blockquote><i>Ответьте на сообщение нужного игрока и введите команду:\n'
+            f'<code>дать 100</code> или <code>/pay 100</code></i></blockquote>',
             parse_mode=ParseMode.HTML
         )
         return
@@ -661,7 +661,7 @@ async def handle_transfer(message: Message, state: FSMContext):
     # Нельзя переводить самому себе
     if target.id == message.from_user.id:
         await message.reply(
-            "❌ <b>Нельзя переводить деньги самому себе.</b>",
+            "<blockquote>❌<b>Нельзя переводить самому себе!</b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -669,7 +669,7 @@ async def handle_transfer(message: Message, state: FSMContext):
     # Нельзя переводить ботам
     if target.is_bot:
         await message.reply(
-            "❌ <b>Нельзя переводить деньги ботам.</b>",
+            "<blockquote>❌<b>Нельзя переводить ботам!</b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -682,20 +682,20 @@ async def handle_transfer(message: Message, state: FSMContext):
     try:
         amount = float(match.group(1).replace(',', '.'))
     except ValueError:
-        await message.reply("❌ <b>Неверный формат суммы.</b>", parse_mode=ParseMode.HTML)
+        await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML)
         return
 
     # Проверка лимитов
     if amount < MIN_TRANSFER:
         await message.reply(
-            f"❌ <b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code></b>",
+            f"<blockquote>❌<b>Минимальная сумма перевода:<code>{MIN_TRANSFER}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
 
     if amount > MAX_TRANSFER:
         await message.reply(
-            f"❌ <b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code></b>",
+            f"<blockquote>❌<b>Максимальная сумма перевода:<code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -704,11 +704,7 @@ async def handle_transfer(message: Message, state: FSMContext):
     sender_balance = storage.get_balance(message.from_user.id)
     if sender_balance < amount:
         await message.reply(
-            f"❌ <b>Недостаточно средств.</b>\n\n"
-            f"<blockquote>"
-            f"💰 Ваш баланс: <code>{sender_balance:,.2f}</code>\n"
-            f"💸 Сумма перевода: <code>{amount:,.2f}</code>"
-            f"</blockquote>",
+            f"<blockquote>❌<b>Недостаточно средств!</b></blockquote>"
             parse_mode=ParseMode.HTML
         )
         return
@@ -721,9 +717,9 @@ async def handle_transfer(message: Message, state: FSMContext):
     target_name = target.first_name or "Игрок"
 
     await message.reply(
-        f"✅ <b>Перевод выполнен!</b>\n\n"
+        f"<tg-emoji emoji-id="5206607081334906820">💰</tg-emoji><b>Перевод выполнен!</b>\n\n"
         f"<blockquote>"
-        f"💸 Вы отправили <code>{amount:,.2f}</code> игроку <b>{target_name}</b>"
+        f"<tg-emoji emoji-id="5195033767969839232">💰</tg-emoji>Вы отправили <code>{amount:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji> игроку <b>{target_name}</b>"
         f"</blockquote>",
         parse_mode=ParseMode.HTML
     )
