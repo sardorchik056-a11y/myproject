@@ -1,6 +1,8 @@
 import logging
 import uuid
 import asyncio
+import hashlib
+import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 
@@ -39,6 +41,61 @@ class Storage:
         self.check_tasks: Dict[str, asyncio.Task] = {}
         self.pending_action: Dict[int, str] = {}
 
+        # ── Защита от дублей ──────────────────────────────────────────────────
+        # Множество уже зачисленных crypto_invoice_id (int) от Cryptobot
+        self._paid_crypto_ids: set = set()
+        # Множество уже использованных internal invoice_id (str)
+        self._processed_invoices: set = set()
+        # Блокировка на уровне пользователя: user_id → asyncio.Lock
+        self._user_locks: Dict[int, asyncio.Lock] = {}
+        # Дедупликация запросов пополнения: хэш (user_id + amount + window) → timestamp
+        self._deposit_requests: Dict[str, float] = {}
+        # Дедупликация запросов вывода: хэш (user_id + amount + window) → timestamp
+        self._withdraw_requests: Dict[str, float] = {}
+        # Глобальная блокировка для операций с балансом
+        self._balance_lock = asyncio.Lock()
+
+    # ── Блокировки на пользователя ────────────────────────────────────────────
+    def get_user_lock(self, user_id: int) -> asyncio.Lock:
+        if user_id not in self._user_locks:
+            self._user_locks[user_id] = asyncio.Lock()
+        return self._user_locks[user_id]
+
+    # ── Защита от повторного зачисления одного и того же счёта Cryptobot ──────
+    def is_crypto_invoice_paid(self, crypto_invoice_id: int) -> bool:
+        return crypto_invoice_id in self._paid_crypto_ids
+
+    def mark_crypto_invoice_paid(self, crypto_invoice_id: int):
+        self._paid_crypto_ids.add(crypto_invoice_id)
+
+    # ── Защита от повторной обработки внутреннего invoice ─────────────────────
+    def is_invoice_processed(self, invoice_id: str) -> bool:
+        return invoice_id in self._processed_invoices
+
+    def mark_invoice_processed(self, invoice_id: str):
+        self._processed_invoices.add(invoice_id)
+
+    # ── Дедупликация быстрых повторных запросов (двойное нажатие) ─────────────
+    def _request_key(self, user_id: int, amount: float, action: str) -> str:
+        window = int(time.time() // 10)  # окно 10 секунд
+        raw = f"{action}:{user_id}:{amount:.4f}:{window}"
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def is_duplicate_request(self, user_id: int, amount: float, action: str) -> bool:
+        key = self._request_key(user_id, amount, action)
+        now = time.time()
+        # Чистим устаревшие записи
+        expired = [k for k, t in self._deposit_requests.items() if now - t > 30]
+        for k in expired:
+            self._deposit_requests.pop(k, None)
+            self._withdraw_requests.pop(k, None)
+
+        store = self._deposit_requests if action == 'deposit' else self._withdraw_requests
+        if key in store:
+            return True
+        store[key] = now
+        return False
+
     def set_pending(self, user_id: int, action: str):
         self.pending_action[user_id] = action
 
@@ -54,8 +111,8 @@ class Storage:
                 'balance': 0.0,
                 'first_name': '',
                 'last_withdrawal': None,
-                'total_deposits': 0.0,      # ТОЛЬКО реальные депозиты через Cryptobot
-                'total_withdrawals': 0.0,   # ТОЛЬКО реальные выводы через Cryptobot
+                'total_deposits': 0.0,
+                'total_withdrawals': 0.0,
                 'join_date': datetime.now().strftime('%Y-%m-%d'),
             }
         return self.users[user_id]
@@ -78,11 +135,22 @@ class Storage:
         return False
 
     # ── Реальные депозиты и выводы через Cryptobot ────────────────────────────
-    def record_deposit(self, user_id: int, amount: float):
-        """Вызывается ТОЛЬКО когда Cryptobot подтвердил оплату."""
+    def record_deposit(self, user_id: int, amount: float, crypto_invoice_id: int) -> bool:
+        """
+        Вызывается ТОЛЬКО когда Cryptobot подтвердил оплату.
+        Возвращает False если счёт уже был зачислен (дюп).
+        """
+        if self.is_crypto_invoice_paid(crypto_invoice_id):
+            logging.warning(
+                f"[DUPE] Попытка повторного зачисления crypto_invoice_id={crypto_invoice_id} "
+                f"для user_id={user_id}, сумма={amount}"
+            )
+            return False
+        self.mark_crypto_invoice_paid(crypto_invoice_id)
         user = self.get_user(user_id)
         user['balance'] = round(user['balance'] + float(amount), 8)
         user['total_deposits'] = round(user.get('total_deposits', 0.0) + float(amount), 8)
+        return True
 
     def record_withdrawal(self, user_id: int, amount: float) -> bool:
         """Вызывается ТОЛЬКО при успешном выводе через Cryptobot."""
@@ -235,8 +303,15 @@ async def check_payment_task(invoice_id: str):
             if not invoice:
                 return
 
+            # Защита: если invoice уже обработан — выходим
+            if storage.is_invoice_processed(invoice_id):
+                logging.warning(f"[{invoice_id}] Уже обработан, выходим из задачи")
+                return
+
             if datetime.now() > invoice['expires_at']:
                 logging.info(f"[{invoice_id}] Счет истек на попытке {attempt}")
+                # Помечаем как обработанный чтобы не было повторов
+                storage.mark_invoice_processed(invoice_id)
                 if invoice.get('chat_id') and invoice.get('message_id'):
                     try:
                         await bot.edit_message_text(
@@ -258,9 +333,38 @@ async def check_payment_task(invoice_id: str):
             logging.info(f"[{invoice_id}] Попытка {attempt+1}: статус={status}")
 
             if status == 'paid':
-                storage.record_deposit(invoice['user_id'], invoice['amount'])
-                storage.update_invoice_status(invoice_id, 'paid')
-                logging.info(f"[{invoice_id}] ОПЛАЧЕН — начислено {invoice['amount']} USDT пользователю {invoice['user_id']}")
+                # ── Атомарная защита от двойного зачисления ───────────────────
+                user_lock = storage.get_user_lock(invoice['user_id'])
+                async with user_lock:
+                    # Двойная проверка внутри локера
+                    if storage.is_invoice_processed(invoice_id):
+                        logging.warning(f"[{invoice_id}] Дюп: invoice уже обработан внутри локера")
+                        return
+                    if storage.is_crypto_invoice_paid(invoice['crypto_id']):
+                        logging.warning(f"[{invoice_id}] Дюп: crypto_id={invoice['crypto_id']} уже зачислен")
+                        storage.mark_invoice_processed(invoice_id)
+                        storage.update_invoice_status(invoice_id, 'paid')
+                        return
+
+                    # Зачисляем — record_deposit сам проверяет crypto_id
+                    credited = storage.record_deposit(
+                        invoice['user_id'],
+                        invoice['amount'],
+                        invoice['crypto_id']
+                    )
+                    storage.mark_invoice_processed(invoice_id)
+                    storage.update_invoice_status(invoice_id, 'paid')
+
+                if credited:
+                    logging.info(
+                        f"[{invoice_id}] ОПЛАЧЕН — начислено {invoice['amount']} USDT "
+                        f"пользователю {invoice['user_id']}"
+                    )
+                else:
+                    logging.warning(
+                        f"[{invoice_id}] ОПЛАЧЕН но зачисление отклонено (дюп) — "
+                        f"crypto_id={invoice['crypto_id']}"
+                    )
 
                 if invoice.get('chat_id') and invoice.get('message_id'):
                     try:
@@ -317,6 +421,16 @@ async def _process_deposit(message: Message, user_id: int):
             )
             return
 
+        # Защита от двойного нажатия / дублирующих запросов
+        if storage.is_duplicate_request(user_id, amount, 'deposit'):
+            logging.warning(f"[DUPE] Дублирующий запрос пополнения: user_id={user_id}, amount={amount}")
+            await message.answer(
+                '<blockquote>⏳ Запрос уже обрабатывается. Подождите несколько секунд.</blockquote>',
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb_back_profile()
+            )
+            return
+
         invoice_data = await crypto_api.create_invoice(amount)
         if not invoice_data or 'pay_url' not in invoice_data:
             await message.answer(
@@ -357,6 +471,7 @@ async def _process_deposit(message: Message, user_id: int):
 
         storage.set_message_info(invoice_id, message.chat.id, sent_msg.message_id)
 
+        # Защита от запуска дублирующей задачи проверки
         if invoice_id not in storage.check_tasks:
             task = asyncio.create_task(check_payment_task(invoice_id))
             storage.check_tasks[invoice_id] = task
@@ -398,16 +513,50 @@ async def _process_withdraw(message: Message, user_id: int):
             )
             return
 
-        check = await crypto_api.create_check(amount, user_id)
-        if not check or 'bot_check_url' not in check:
+        # Защита от двойного нажатия / дублирующих запросов вывода
+        if storage.is_duplicate_request(user_id, amount, 'withdraw'):
+            logging.warning(f"[DUPE] Дублирующий запрос вывода: user_id={user_id}, amount={amount}")
             await message.answer(
-                '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
+                '<blockquote>⏳ Запрос уже обрабатывается. Подождите несколько секунд.</blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb_back_profile()
             )
             return
 
-        storage.record_withdrawal(user_id, amount)
+        # Атомарное списание — берём локер пользователя
+        user_lock = storage.get_user_lock(user_id)
+        async with user_lock:
+            # Повторная проверка баланса внутри локера (мог измениться пока ждали)
+            balance_now = storage.get_balance(user_id)
+            if amount > balance_now:
+                await message.answer(
+                    f'<blockquote>❌ Недостаточно средств!</blockquote>',
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb_back_profile()
+                )
+                return
+
+            check = await crypto_api.create_check(amount, user_id)
+            if not check or 'bot_check_url' not in check:
+                await message.answer(
+                    '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=kb_back_profile()
+                )
+                return
+
+            # Списываем только если чек создан успешно
+            withdrawn = storage.record_withdrawal(user_id, amount)
+
+        if not withdrawn:
+            logging.error(f"[WITHDRAW] record_withdrawal вернул False: user_id={user_id}, amount={amount}")
+            await message.answer(
+                '<blockquote>❌ Ошибка списания средств. Попробуйте позже.</blockquote>',
+                parse_mode=ParseMode.HTML,
+                reply_markup=kb_back_profile()
+            )
+            return
+
         storage.set_last_withdrawal(user_id)
 
         await message.answer(
