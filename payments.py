@@ -12,7 +12,7 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 
 # Настройки Cryptobot
-CRYPTOBOT_API_KEY = "477733:AAzooy5vcnCpJuGgTZc1Rdfbu71bqmrRMgr"
+CRYPTOBOT_API_KEY = "526036:AAmCKe81iaKXe5Js1BkxpwJ4ZKrPTWqPB0v"
 CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
 
 # Минимальные суммы
