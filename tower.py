@@ -66,7 +66,8 @@ _timeout_tasks: dict = {}  # user_id -> asyncio.Task
 
 # ========== ЗАЩИТА ОТ ДУБЛЕЙ ==========
 _user_locks: dict = {}   # user_id -> asyncio.Lock — для ячеек/кэшаута/таймаута
-_bet_locks: dict  = {}   # user_id -> asyncio.Lock — для создания ставки
+_bet_locks: dict    = {}        # user_id -> asyncio.Lock — для создания ставки
+_last_owner: dict   = {}        # user_id -> int — владелец последней игры (для post-game кнопок)
 
 
 def _get_user_lock(user_id: int) -> asyncio.Lock:
@@ -79,6 +80,18 @@ def _get_bet_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _bet_locks:
         _bet_locks[user_id] = asyncio.Lock()
     return _bet_locks[user_id]
+
+
+def _check_owner(callback_user_id: int, session: dict) -> bool:
+    """Проверяет что нажавший кнопку — владелец игры."""
+    owner = session.get('owner_id', 0)
+    return owner == 0 or callback_user_id == owner
+
+
+def _check_post_game_owner(user_id: int, callback_user_id: int) -> bool:
+    """Проверяет владельца для post-game кнопок (когда сессии уже нет)."""
+    owner = _last_owner.get(user_id, 0)
+    return owner == 0 or callback_user_id == owner
 
 
 # ========== ТАЙМАУТ БЕЗДЕЙСТВИЯ ==========
@@ -183,7 +196,7 @@ def get_next_mult(difficulty: int, floors_passed: int) -> float:
     return mults[floors_passed]
 
 
-def _create_session(difficulty: int, bet: float, chat_id: int) -> dict:
+def _create_session(difficulty: int, bet: float, chat_id: int, owner_id: int = 0) -> dict:
     """Генерируем позиции бомб для всех 6 этажей заранее."""
     bombs  = DIFFICULTY_BOMBS[difficulty]
     floors = []
@@ -201,6 +214,7 @@ def _create_session(difficulty: int, bet: float, chat_id: int) -> dict:
         'floors':            floors,
         'message_id':        None,
         'chat_id':           chat_id,
+        'owner_id':          owner_id,
         'finishing':         False,   # флаг завершения — защита от двойного кэшаута/взрыва
         'processing_cells':  set(),   # ячейки в обработке — защита от двойного клика
     }
@@ -411,6 +425,9 @@ async def tower_back_select(callback: CallbackQuery, state: FSMContext):
 async def tower_play_again(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
+    if not _check_post_game_owner(user_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
     _sessions.pop(user_id, None)
     _cancel_timeout(user_id)
     await state.clear()
@@ -421,6 +438,14 @@ async def tower_play_again(callback: CallbackQuery, state: FSMContext):
 async def tower_exit(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
+    # Проверяем владельца — через активную сессию или через _last_owner
+    session = _sessions.get(user_id)
+    if session and not _check_owner(callback.from_user.id, session):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
+    if not session and not _check_post_game_owner(user_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
     _sessions.pop(user_id, None)
     _cancel_timeout(user_id)
     await state.clear()
@@ -450,6 +475,11 @@ async def tower_cell_handler(callback: CallbackQuery, state: FSMContext):
     session = _sessions.get(user_id)
     if not session:
         await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
+        return
+
+    # Защита: чужая игра
+    if not _check_owner(callback.from_user.id, session):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
 
     # Защита: игра уже завершается
@@ -622,6 +652,11 @@ async def tower_cashout(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Игра не найдена.", show_alert=True)
             return
 
+        # Защита: чужая игра
+        if not _check_owner(callback.from_user.id, session):
+            await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+            return
+
         # Защита от двойного кэшаута
         if session.get('finishing'):
             await callback.answer()
@@ -732,8 +767,9 @@ async def process_tower_bet(message: Message, state: FSMContext, storage):
         # ✅ Начисляем реферальную комиссию (2% от ставки)
         asyncio.create_task(notify_referrer_commission(user_id, bet))
 
-        session = _create_session(difficulty, bet, message.chat.id)
+        session = _create_session(difficulty, bet, message.chat.id, user_id)
         _sessions[user_id] = session
+        _last_owner[user_id] = user_id
         await state.set_state(TowerGame.playing)
 
     sent = await message.answer(
@@ -829,8 +865,9 @@ async def process_tower_command(message: Message, state: FSMContext, storage):
         # ✅ Начисляем реферальную комиссию (2% от ставки)
         asyncio.create_task(notify_referrer_commission(user_id, bet))
 
-        session = _create_session(difficulty, bet, message.chat.id)
+        session = _create_session(difficulty, bet, message.chat.id, user_id)
         _sessions[user_id] = session
+        _last_owner[user_id] = user_id
         await state.set_state(TowerGame.playing)
 
     sent = await message.answer(
