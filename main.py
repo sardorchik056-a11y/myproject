@@ -716,14 +716,14 @@ async def handle_transfer(message: Message, state: FSMContext):
     # Проверка лимитов
     if amount < MIN_TRANSFER:
         await message.reply(
-            f"<blockquote>❌<b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>",
+            f"<blockquote>❌<b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji></b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
 
     if amount > MAX_TRANSFER:
         await message.reply(
-            f"<blockquote>❌<b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>",
+            f"<blockquote>❌<b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji></b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -762,9 +762,9 @@ async def handle_transfer(message: Message, state: FSMContext):
     target_name = target.first_name or "Игрок"
 
     await message.reply(
-        f"<tg-emoji emoji-id="5206607081334906820">💰</tg-emoji><b>Перевод выполнен!</b>\n\n"
+        f"<tg-emoji emoji-id='5206607081334906820'>💰</tg-emoji><b>Перевод выполнен!</b>\n\n"
         f"<blockquote>"
-        f"<tg-emoji emoji-id="5195033767969839232">💰</tg-emoji>Вы отправили <code>{amount:,.2f}</code> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>игроку <b>{target_name}</b>"
+        f"<tg-emoji emoji-id='5195033767969839232'>💰</tg-emoji>Вы отправили <code>{amount:,.2f}</code> <tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji>игроку <b>{target_name}</b>"
         f"</blockquote>",
         parse_mode=ParseMode.HTML
     )
