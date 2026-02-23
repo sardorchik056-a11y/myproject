@@ -609,6 +609,12 @@ async def tower_cell_handler(callback: CallbackQuery, state: FSMContext):
             _cancel_timeout(user_id)
             await state.clear()
 
+            # Заполняем бомбы на непройденных этажах выше для отображения
+            num_bombs = DIFFICULTY_BOMBS[difficulty]
+            for fi in range(floor_idx + 1, FLOORS):
+                if not session['floors'][fi]['bomb_cols']:
+                    session['floors'][fi]['bomb_cols'] = random.sample(range(CELLS), min(num_bombs, CELLS))
+
             # Записываем в лидерборд: проигрыш
             name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
             record_game_result(user_id, name, bet, 0.0)
