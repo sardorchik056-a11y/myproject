@@ -530,16 +530,28 @@ async def mines_noop(callback: CallbackQuery):
 @mines_router.callback_query(F.data.startswith("mines_cell_"))
 async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
-    user_id = callback.from_user.id
-    idx     = int(callback.data.split("_")[-1])
+    caller_id = callback.from_user.id
+    idx       = int(callback.data.split("_")[-1])
 
-    session = _sessions.get(user_id)
+    # Ищем сессию: сначала по caller_id (владелец), потом по owner_id среди всех
+    session = _sessions.get(caller_id)
+    user_id = caller_id  # user_id = ключ в _sessions (= owner)
+
     if not session:
-        await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
+        # Проверяем — может это чужая игра?
+        for oid, s in list(_sessions.items()):
+            if s.get('owner_id') == caller_id:
+                session = s
+                user_id = oid
+                break
+
+    if not session:
+        # Нет вообще никакой активной игры — возможно чужая кнопка
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
         return
 
     # Защита: чужая игра
-    if not _check_owner(callback.from_user.id, session):
+    if not _check_owner(caller_id, session):
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
 
@@ -565,7 +577,7 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
         # Повторные проверки внутри локера (состояние могло измениться пока ждали)
         session = _sessions.get(user_id)
         if not session:
-            await callback.answer("Игра не найдена. Начните заново.", show_alert=True)
+            await callback.answer("🚫 Игра уже завершена!", show_alert=True)
             return
 
         if session.get('finishing'):
