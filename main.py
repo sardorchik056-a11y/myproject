@@ -41,6 +41,10 @@ from referrals import (
 
 # Импортируем модуль лидеров
 from leaders import leaders_router, show_leaders, update_user_name
+import leaders as _leaders_module
+import mines as _mines_module
+import tower as _tower_module
+import referrals as _referrals_module
 
 # Настройки
 BOT_TOKEN = "8586332532:AAHX758cf6iOUpPNpY2sqseGBYsKJo9js4U"
@@ -123,8 +127,20 @@ def _set_msg_owner(message_id: int, user_id: int):
 def _is_msg_owner(message_id: int, user_id: int) -> bool:
     owner = _msg_owners.get(message_id)
     if owner is None:
-        return True  # старое сообщение без записи — пускаем
+        return True   # сообщение без записи — пускаем (старые сообщения)
     return owner == user_id
+
+
+def _inject_leaders_owner_fns():
+    """Передаём во все дочерние модули ссылки на единый словарь владельцев."""
+    _leaders_module.set_owner_fn   = _set_msg_owner
+    _leaders_module.is_owner_fn    = _is_msg_owner
+    _mines_module.set_owner_fn     = _set_msg_owner
+    _mines_module.is_owner_fn      = _is_msg_owner
+    _tower_module.set_owner_fn     = _set_msg_owner
+    _tower_module.is_owner_fn      = _is_msg_owner
+    _referrals_module.set_owner_fn = _set_msg_owner
+    _referrals_module.is_owner_fn  = _is_msg_owner
 
 
 # ========== FSM ==========
@@ -512,6 +528,9 @@ async def cmd_add_promo(message: Message):
 # ========== ПРОМОКОДЫ: МЕНЮ ==========
 @router.callback_query(F.data == "promo_menu")
 async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await callback.message.edit_text(
         f'<tg-emoji emoji-id="{EMOJI_PROMO}">💣</tg-emoji> <b>Промокоды</b>\n\n'
@@ -524,12 +543,16 @@ async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_promo_menu(),
         disable_web_page_preview=True
     )
+    _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
 # ========== ПРОМОКОДЫ: ВВОД ==========
 @router.callback_query(F.data == "promo_enter")
 async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.set_state(PromoState.entering_code)
     await callback.message.edit_text(
         f'<tg-emoji emoji-id="5197269100878907942">📊</tg-emoji> <b>Введите промокод</b>\n\n'
@@ -537,6 +560,7 @@ async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
         parse_mode=ParseMode.HTML,
         reply_markup=get_promo_cancel_menu()
     )
+    _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
@@ -987,6 +1011,7 @@ async def main():
     # Настройка модулей
     setup_payments(bot)
     setup_referrals(bot)
+    _inject_leaders_owner_fns()   # ← единый _msg_owners для всех модулей
 
     # Удаляем вебхук (на всякий случай) и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
