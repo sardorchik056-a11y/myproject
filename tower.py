@@ -655,12 +655,12 @@ async def tower_cell_handler(callback: CallbackQuery, state: FSMContext):
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(
                             text="Играть снова",
-                            callback_data="tower_menu",
+                            callback_data="tower_cashout_again",
                             icon_custom_emoji_id=EMOJI_3POINT
                         )],
                         [InlineKeyboardButton(
                             text="Выйти",
-                            callback_data="games",
+                            callback_data="tower_cashout_exit",
                             icon_custom_emoji_id=EMOJI_BACK
                         )],
                     ])
@@ -751,18 +751,50 @@ async def tower_cashout(callback: CallbackQuery, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(
                 text="Играть снова",
-                callback_data="tower_menu",
+                callback_data="tower_cashout_again",
                 icon_custom_emoji_id=EMOJI_3POINT
             )],
             [InlineKeyboardButton(
                 text="Выйти",
-                callback_data="games",
+                callback_data="tower_cashout_exit",
                 icon_custom_emoji_id=EMOJI_BACK
             )],
         ])
     )
     set_owner_fn(callback.message.message_id, user_id)
     await callback.answer(f"💰 +{winnings}!")
+
+
+
+@tower_router.callback_query(F.data == "tower_cashout_again")
+async def tower_cashout_again(callback: CallbackQuery, state: FSMContext):
+    from payments import storage as pay_storage
+    caller_id = callback.from_user.id
+    msg_id    = callback.message.message_id
+    board_owner = _game_board_owner.get(msg_id)
+    if board_owner is None or board_owner != caller_id:
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
+    await state.clear()
+    await show_tower_menu(callback, pay_storage)
+
+
+@tower_router.callback_query(F.data == "tower_cashout_exit")
+async def tower_cashout_exit(callback: CallbackQuery, state: FSMContext):
+    caller_id = callback.from_user.id
+    msg_id    = callback.message.message_id
+    board_owner = _game_board_owner.get(msg_id)
+    if board_owner is None or board_owner != caller_id:
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
+    await state.clear()
+    from main import get_games_menu, get_games_menu_text
+    await callback.message.edit_text(
+        get_games_menu_text(caller_id),
+        parse_mode="HTML",
+        reply_markup=get_games_menu()
+    )
+    await callback.answer()
 
 
 # ========== ОБРАБОТКА СТАВКИ (вызов из main.py через FSM) ==========
