@@ -396,11 +396,12 @@ async def cmd_start(message: Message):
         update_user_name(storage, message.from_user.id, message.from_user.first_name or "")
 
         await message.answer_sticker(sticker=WELCOME_STICKER_ID)
-        await message.answer(
+        sent = await message.answer(
             get_main_menu_text(),
             parse_mode=ParseMode.HTML,
             reply_markup=get_main_menu()
         )
+        _set_msg_owner(sent.message_id, message.from_user.id)
     except Exception as e:
         logging.error(f"Error in start: {e}")
         await message.answer("Произошла ошибка. Попробуйте позже.")
@@ -542,6 +543,9 @@ async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
 # ========== ПРОФИЛЬ ==========
 @router.callback_query(F.data == "profile")
 async def profile_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
+        return
     await state.clear()
     from datetime import datetime
     user_data     = storage.get_user(callback.from_user.id)
@@ -564,6 +568,9 @@ async def profile_callback(callback: CallbackQuery, state: FSMContext):
 # ========== ИГРЫ ==========
 @router.callback_query(F.data == "games")
 async def games_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await callback.message.edit_text(
         get_games_menu_text(callback.from_user.id),
@@ -571,12 +578,16 @@ async def games_callback(callback: CallbackQuery, state: FSMContext):
         reply_markup=get_games_menu(),
         disable_web_page_preview=True
     )
+    _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
 # ========== МИНЫ — ВХОД ==========
 @router.callback_query(F.data == "mines_menu")
 async def mines_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_mines_menu(callback, storage, betting_game)
 
@@ -584,6 +595,9 @@ async def mines_menu_callback(callback: CallbackQuery, state: FSMContext):
 # ========== БАШНЯ — ВХОД ==========
 @router.callback_query(F.data == "tower_menu")
 async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_tower_menu(callback, storage, betting_game)
 
@@ -591,40 +605,64 @@ async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
 # ========== ОСТАЛЬНЫЕ ИГРЫ ==========
 @router.callback_query(F.data == GAME_CALLBACKS['dice'])
 async def dice_menu(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_dice_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['basketball'])
 async def basketball_menu(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_basketball_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['football'])
 async def football_menu(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_football_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['darts'])
 async def darts_menu(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_darts_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['bowling'])
 async def bowling_menu(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_bowling_menu(callback)
 
 @router.callback_query(F.data == "bet_dice_exact")
 async def exact_number_menu(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_exact_number_menu(callback)
 
 @router.callback_query(F.data.startswith("bet_"))
 async def handle_bet_selection(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await request_amount(callback, state, betting_game)
 
 @router.callback_query(F.data == "cancel_bet")
 async def handle_cancel_bet(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await cancel_bet(callback, state, betting_game)
 
 
@@ -864,6 +902,9 @@ async def handle_text_message(message: Message, state: FSMContext):
 # ========== ЛИДЕРЫ ==========
 @router.callback_query(F.data == "leaders")
 async def leaders_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await show_leaders(callback, storage)
 
@@ -871,6 +912,9 @@ async def leaders_callback(callback: CallbackQuery, state: FSMContext):
 # ========== О ПРОЕКТЕ ==========
 @router.callback_query(F.data == "about")
 async def about_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await callback.message.edit_text(
         f'<tg-emoji emoji-id="{EMOJI_ABOUT}">ℹ️</tg-emoji> <b>О проекте</b>\n\n',
@@ -889,12 +933,16 @@ async def about_callback(callback: CallbackQuery, state: FSMContext):
             ]
         ])
     )
+    _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
 # ========== НА ГЛАВНУЮ ==========
 @router.callback_query(F.data == "back_to_main")
 async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     storage.clear_pending(callback.from_user.id)
     await callback.message.edit_text(
@@ -902,6 +950,7 @@ async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
         parse_mode=ParseMode.HTML,
         reply_markup=get_main_menu()
     )
+    _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
