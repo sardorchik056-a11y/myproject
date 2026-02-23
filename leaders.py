@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from aiogram import Router, F
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.enums import ParseMode
@@ -14,25 +15,22 @@ EMOJI_DEPOSIT  = "5443127283898405358"
 EMOJI_WITHDRAW = "5445355530111437729"
 EMOJI_COIN     = "5197434882321567830"
 
-# ── Кастомные эмодзи для каждого места (замени ID на свои) ───────────────────
-EMOJI_TOP1  = "5440539497383087970"   # 🏆  место 1
-EMOJI_TOP2  = "5447203607294265305"   # место 2
-EMOJI_TOP3  = "5453902265922376865"   # место 3
-EMOJI_TOP4  = "5382054253403577563"   # место 4
-EMOJI_TOP5  = "5391197405553107640"   # место 5
-EMOJI_TOP6  = "5390966190283694453"   # место 6
-EMOJI_TOP7  = "5382132232829804982"   # место 7
-EMOJI_TOP8  = "5391038994274329680"   # место 8
-EMOJI_TOP9  = "5391234698754138414"   # место 9
-EMOJI_TOP10 = "5393480373944459905"   # место 10
+EMOJI_TOP1  = "5440539497383087970"
+EMOJI_TOP2  = "5447203607294265305"
+EMOJI_TOP3  = "5453902265922376865"
+EMOJI_TOP4  = "5382054253403577563"
+EMOJI_TOP5  = "5391197405553107640"
+EMOJI_TOP6  = "5390966190283694453"
+EMOJI_TOP7  = "5382132232829804982"
+EMOJI_TOP8  = "5391038994274329680"
+EMOJI_TOP9  = "5391234698754138414"
+EMOJI_TOP10 = "5393480373944459905"
 
-# Список по порядку (индекс 0 = 1-е место)
 EMOJI_TOP_LIST = [
     EMOJI_TOP1, EMOJI_TOP2, EMOJI_TOP3, EMOJI_TOP4, EMOJI_TOP5,
     EMOJI_TOP6, EMOJI_TOP7, EMOJI_TOP8, EMOJI_TOP9, EMOJI_TOP10,
 ]
 
-# ── Типы и периоды ────────────────────────────────────────────────────────────
 LEADER_TYPES   = ["turnover", "wins", "deposits", "withdrawals"]
 LEADER_PERIODS = ["today", "yesterday", "week", "month"]
 
@@ -50,19 +48,97 @@ PERIOD_LABELS = {
     "month":     "Месяц",
 }
 
-# ── Внутреннее хранилище игровой статистики ───────────────────────────────────
+DB_PATH = "casino.db"
+
+# ── Кэш в памяти (для быстрого доступа внутри сессии) ────────────────────────
 # _stats[user_id][date_str] = {"turnover": float, "wins": float, "name": str}
 _stats: dict = {}
 
-# Функция записи владельца — передаётся извне (из main.py) чтобы
-# использовать единый _msg_owners и не плодить параллельные словари.
-# Инициализируем заглушкой; main.py перезапишет через leaders.set_owner_fn.
 def _noop_set_owner(message_id: int, user_id: int): pass
 def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
 
-set_owner_fn    = _noop_set_owner
-is_owner_fn     = _noop_is_owner
+set_owner_fn = _noop_set_owner
+is_owner_fn  = _noop_is_owner
 
+
+# ══════════════════════════════════════════════════════════════════
+#  SQLite: инициализация таблицы игровой статистики
+# ══════════════════════════════════════════════════════════════════
+
+def _db_connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_leaders_db():
+    """Создаёт таблицу leaders_stats если её нет, и загружает данные в _stats."""
+    try:
+        with _db_connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS leaders_stats (
+                    user_id  INTEGER NOT NULL,
+                    date     TEXT    NOT NULL,
+                    name     TEXT    DEFAULT '',
+                    turnover REAL    DEFAULT 0.0,
+                    wins     REAL    DEFAULT 0.0,
+                    PRIMARY KEY (user_id, date)
+                )
+            """)
+            conn.commit()
+        logging.info("[Leaders] Таблица leaders_stats готова.")
+        _load_stats_from_db()
+    except Exception as e:
+        logging.error(f"[Leaders] Ошибка инициализации БД: {e}")
+
+
+def _load_stats_from_db():
+    """Загружает всю таблицу leaders_stats в память (_stats)."""
+    global _stats
+    try:
+        with _db_connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, date, name, turnover, wins FROM leaders_stats")
+            rows = cur.fetchall()
+        _stats = {}
+        for row in rows:
+            uid  = int(row["user_id"])
+            date = row["date"]
+            if uid not in _stats:
+                _stats[uid] = {}
+            _stats[uid][date] = {
+                "turnover": float(row["turnover"]),
+                "wins":     float(row["wins"]),
+                "name":     row["name"] or f"User {uid}",
+            }
+        logging.info(f"[Leaders] Загружено записей из БД: {len(rows)}")
+    except Exception as e:
+        logging.error(f"[Leaders] Ошибка загрузки stats из БД: {e}")
+
+
+def _save_stat_to_db(user_id: int, date: str):
+    """Сохраняет одну запись (user_id, date) из _stats в БД."""
+    try:
+        day = _stats.get(user_id, {}).get(date)
+        if day is None:
+            return
+        with _db_connect() as conn:
+            conn.execute("""
+                INSERT INTO leaders_stats (user_id, date, name, turnover, wins)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id, date) DO UPDATE SET
+                    name     = excluded.name,
+                    turnover = excluded.turnover,
+                    wins     = excluded.wins
+            """, (user_id, date, day["name"], day["turnover"], day["wins"]))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"[Leaders] Ошибка сохранения stat в БД: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Вспомогательные функции дат
+# ══════════════════════════════════════════════════════════════════
 
 def _today_str() -> str:
     from datetime import datetime, timezone
@@ -83,7 +159,10 @@ def _dates_for_period(period: str) -> list:
     return [str(today)]
 
 
-# ── Публичная функция записи результата игры ─────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  Публичные функции записи результатов
+# ══════════════════════════════════════════════════════════════════
+
 def record_game_result(user_id: int, name: str, bet: float, win: float):
     """
     Вызывается из mines.py / tower.py / game.py после каждой завершённой ставки.
@@ -98,15 +177,13 @@ def record_game_result(user_id: int, name: str, bet: float, win: float):
 
     _stats[user_id][date]["turnover"] += bet
     _stats[user_id][date]["wins"]     += win
-    _stats[user_id][date]["name"]      = name   # обновляем имя при каждой игре
+    _stats[user_id][date]["name"]      = name
+
+    # Сохраняем в БД сразу после каждой игры
+    _save_stat_to_db(user_id, date)
 
 
-# ── Сохранение имени пользователя в storage (вызывать при любом обращении) ───
 def update_user_name(storage, user_id: int, first_name: str):
-    """
-    Записывает имя в payments.storage.users чтобы депозиты/выводы
-    отображали ник, а не ID.
-    """
     try:
         user = storage.get_user(user_id)
         if first_name:
@@ -115,7 +192,10 @@ def update_user_name(storage, user_id: int, first_name: str):
         pass
 
 
-# ── Топ-10 ───────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  Топ-10
+# ══════════════════════════════════════════════════════════════════
+
 def get_top10(storage, leader_type: str, period: str) -> list:
     dates = _dates_for_period(period)
     results = {}
@@ -142,8 +222,6 @@ def get_top10(storage, leader_type: str, period: str) -> list:
             value = float(data.get(field, 0) or 0)
             if value <= 0:
                 continue
-
-            # Приоритет: first_name → username → имя из _stats → "User {id}"
             name = (
                 data.get("first_name")
                 or data.get("username")
@@ -157,7 +235,6 @@ def get_top10(storage, leader_type: str, period: str) -> list:
 
 
 def _get_name_from_stats(user_id: int) -> str:
-    """Ищет последнее известное имя игрока в _stats."""
     day_data = _stats.get(user_id, {})
     for date in sorted(day_data.keys(), reverse=True):
         name = day_data[date].get("name", "")
@@ -166,7 +243,10 @@ def _get_name_from_stats(user_id: int) -> str:
     return ""
 
 
-# ── Клавиатура ────────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  Клавиатура
+# ══════════════════════════════════════════════════════════════════
+
 def get_leaders_keyboard(active_type: str, active_period: str) -> InlineKeyboardMarkup:
     def type_btn(t_id: str):
         label, emoji_id = TYPE_LABELS[t_id]
@@ -195,7 +275,10 @@ def get_leaders_keyboard(active_type: str, active_period: str) -> InlineKeyboard
     ])
 
 
-# ── Текст таблицы ─────────────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  Текст таблицы
+# ══════════════════════════════════════════════════════════════════
+
 def build_leaders_text(storage, leader_type: str, period: str) -> str:
     type_label, type_emoji_id = TYPE_LABELS[leader_type]
     period_label = PERIOD_LABELS[period]
@@ -214,7 +297,7 @@ def build_leaders_text(storage, leader_type: str, period: str) -> str:
     else:
         lines = []
         for i, entry in enumerate(top, start=1):
-            emoji_id = EMOJI_TOP_LIST[i - 1]   # кастомное эмодзи для места
+            emoji_id = EMOJI_TOP_LIST[i - 1]
             lines.append(
                 f'<tg-emoji emoji-id="{emoji_id}">🏅</tg-emoji> '
                 f'<b>{entry["name"]}</b> — '
@@ -226,17 +309,22 @@ def build_leaders_text(storage, leader_type: str, period: str) -> str:
     return header + body
 
 
-# ── Публичная функция входа ───────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  Публичная функция входа
+# ══════════════════════════════════════════════════════════════════
+
 async def show_leaders(callback: CallbackQuery, storage_obj):
     text = build_leaders_text(storage_obj, "turnover", "today")
     kb   = get_leaders_keyboard("turnover", "today")
     await callback.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
-    # Записываем владельца через общую функцию из main.py
     set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
-# ── Хендлер переключения ─────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════
+#  Хендлер переключения
+# ══════════════════════════════════════════════════════════════════
+
 @leaders_router.callback_query(F.data.startswith("leaders:"))
 async def leaders_switch(callback: CallbackQuery):
     parts = callback.data.split(":")
@@ -250,7 +338,6 @@ async def leaders_switch(callback: CallbackQuery):
         await callback.answer("Неверные параметры", show_alert=True)
         return
 
-    # Проверка владельца: только тот кто открыл это меню может переключать
     msg_id = callback.message.message_id
     if not is_owner_fn(msg_id, callback.from_user.id):
         await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
