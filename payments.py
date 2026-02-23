@@ -11,6 +11,14 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
 
+# База данных
+try:
+    from database import save_deposit, save_withdrawal, update_user_info
+except ImportError:
+    async def save_deposit(user_id, amount, crypto_invoice_id): pass
+    async def save_withdrawal(user_id, amount): pass
+    async def update_user_info(user_id, **kwargs): pass
+
 # Настройки Cryptobot
 CRYPTOBOT_API_KEY = "526036:AAmCKe81iaKXe5Js1BkxpwJ4ZKrPTWqPB0v"
 CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
@@ -360,6 +368,12 @@ async def check_payment_task(invoice_id: str):
                         f"[{invoice_id}] ОПЛАЧЕН — начислено {invoice['amount']} USDT "
                         f"пользователю {invoice['user_id']}"
                     )
+                    # Сохраняем депозит в БД
+                    asyncio.create_task(save_deposit(
+                        invoice['user_id'],
+                        invoice['amount'],
+                        invoice['crypto_id']
+                    ))
                 else:
                     logging.warning(
                         f"[{invoice_id}] ОПЛАЧЕН но зачисление отклонено (дюп) — "
@@ -470,6 +484,12 @@ async def _process_deposit(message: Message, user_id: int):
         )
 
         storage.set_message_info(invoice_id, message.chat.id, sent_msg.message_id)
+        # Сохраняем информацию о пользователе в БД
+        asyncio.create_task(update_user_info(
+            user_id,
+            first_name=message.from_user.first_name or '',
+            username=message.from_user.username or ''
+        ))
 
         # Защита от запуска дублирующей задачи проверки
         if invoice_id not in storage.check_tasks:
@@ -558,6 +578,8 @@ async def _process_withdraw(message: Message, user_id: int):
             return
 
         storage.set_last_withdrawal(user_id)
+        # Сохраняем вывод в БД
+        asyncio.create_task(save_withdrawal(user_id, amount))
 
         await message.answer(
             text=(
