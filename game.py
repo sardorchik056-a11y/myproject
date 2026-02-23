@@ -8,6 +8,13 @@ import re
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Tuple
 
+# База данных
+try:
+    from database import save_game_result as db_save_game_result, update_balance as db_update_balance
+except ImportError:
+    async def db_save_game_result(user_id, game_name, score): pass
+    async def db_update_balance(user_id, amount): return None
+
 # Реферальная система
 try:
     from referrals import notify_referrer_commission
@@ -837,6 +844,8 @@ async def play_single_dice_game(chat_id: int, user_id: int, nickname: str, amoun
         winnings = amount * bet_config['multiplier']
         betting_game.add_balance(user_id, winnings)
         record_game_result(user_id, nickname, amount, winnings)
+        # Сохраняем результат в БД
+        asyncio.create_task(db_save_game_result(user_id, 'game', winnings))
 
         await dice_message.reply(
             f"<b>{nickname}-Вы выиграли<tg-emoji emoji-id=\"5461151367559141950\">🎉</tg-emoji></b>\n\n"
@@ -846,6 +855,8 @@ async def play_single_dice_game(chat_id: int, user_id: int, nickname: str, amoun
         )
     else:
         record_game_result(user_id, nickname, amount, 0.0)
+        # Сохраняем проигрыш в БД
+        asyncio.create_task(db_save_game_result(user_id, 'game', 0.0))
         await dice_message.reply(
             f"<b>{nickname}-Вы проиграли<tg-emoji emoji-id=\"5422858869372104873\">❌</tg-emoji></b>\n\n"
             f"<blockquote><b><i>Это не повод сдаваться! Пробуй снова и снова до победного!</i></b></blockquote>\n"
@@ -883,6 +894,8 @@ async def play_double_dice_game(chat_id: int, user_id: int, nickname: str, amoun
         winnings = amount * bet_config['multiplier']
         betting_game.add_balance(user_id, winnings)
         record_game_result(user_id, nickname, amount, winnings)
+        # Сохраняем результат в БД
+        asyncio.create_task(db_save_game_result(user_id, 'game', winnings))
 
         await dice2.reply(
             f"<b>{nickname}-Вы выиграли<tg-emoji emoji-id=\"5461151367559141950\">🎉</tg-emoji></b>\n\n"
@@ -892,6 +905,8 @@ async def play_double_dice_game(chat_id: int, user_id: int, nickname: str, amoun
         )
     else:
         record_game_result(user_id, nickname, amount, 0.0)
+        # Сохраняем проигрыш в БД
+        asyncio.create_task(db_save_game_result(user_id, 'game', 0.0))
         await dice2.reply(
             f"<b>{nickname}-Вы проиграли<tg-emoji emoji-id=\"5422858869372104873\">❌</tg-emoji></b>\n\n"
             f"<blockquote><b><i>Это не повод сдаваться! Пробуй снова и снова до победного!</i></b></blockquote>\n"
@@ -944,6 +959,8 @@ async def play_bowling_vs_game(chat_id: int, user_id: int, nickname: str, amount
         winnings = amount * bet_config['multiplier']
         betting_game.add_balance(user_id, winnings)
         record_game_result(user_id, nickname, amount, winnings)
+        # Сохраняем результат в БД
+        asyncio.create_task(db_save_game_result(user_id, 'game', winnings))
 
         await bot_roll.reply(
             f"<b>{nickname}-Вы выиграли<tg-emoji emoji-id=\"5461151367559141950\">🎉</tg-emoji></b>\n\n"
@@ -953,6 +970,8 @@ async def play_bowling_vs_game(chat_id: int, user_id: int, nickname: str, amount
         )
     else:
         record_game_result(user_id, nickname, amount, 0.0)
+        # Сохраняем проигрыш в БД
+        asyncio.create_task(db_save_game_result(user_id, 'game', 0.0))
         await bot_roll.reply(
             f"<b>{nickname}-Вы проиграли<tg-emoji emoji-id=\"5422858869372104873\">❌</tg-emoji></b>\n\n"
             f"<blockquote><b><i>Это не повод сдаваться! Пробуй снова и снова до победного!</i></b></blockquote>\n"
