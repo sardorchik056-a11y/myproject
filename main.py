@@ -54,7 +54,7 @@ except ImportError:
     async def import_users_from_json(): pass
 
 # Настройки
-BOT_TOKEN = "8586332532:AAHX758cf6iOUpPNpY2sqseGBYsKJo9js4U"
+BOT_TOKEN = "8531951028:AAFWUlHwpWfRrD2MvT4BqtexO7nFsQwFpcA"
 
 # ========== ССЫЛКИ ==========
 LINK_NEWS     = "https://t.me/FesteryNews"
