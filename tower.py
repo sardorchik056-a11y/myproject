@@ -64,6 +64,12 @@ tower_router = Router()
 _sessions: dict      = {}  # user_id -> session dict
 _timeout_tasks: dict = {}  # user_id -> asyncio.Task
 
+# Функции владельца — инжектируются из main.py при старте
+def _noop_set_owner(message_id: int, user_id: int): pass
+def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
+set_owner_fn = _noop_set_owner
+is_owner_fn  = _noop_is_owner
+
 # ========== ЗАЩИТА ОТ ДУБЛЕЙ ==========
 _user_locks: dict = {}   # user_id -> asyncio.Lock — для ячеек/кэшаута/таймаута
 _bet_locks: dict    = {}        # user_id -> asyncio.Lock — для создания ставки
@@ -375,6 +381,7 @@ async def show_tower_menu(callback: CallbackQuery, storage, betting_game=None):
         parse_mode=ParseMode.HTML,
         reply_markup=build_tower_select_keyboard()
     )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
@@ -382,6 +389,9 @@ async def show_tower_menu(callback: CallbackQuery, storage, betting_game=None):
 
 @tower_router.callback_query(F.data == "tower_menu")
 async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     from payments import storage as pay_storage
     await state.clear()
     await show_tower_menu(callback, pay_storage)
@@ -390,6 +400,10 @@ async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
 @tower_router.callback_query(F.data.startswith("tower_diff_"))
 async def tower_diff_handler(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
+
+    if not is_owner_fn(callback.message.message_id, user_id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
 
     if _has_active_game(user_id):
         await callback.answer(
@@ -413,11 +427,15 @@ async def tower_diff_handler(callback: CallbackQuery, state: FSMContext):
             )
         ]])
     )
+    set_owner_fn(callback.message.message_id, user_id)
     await callback.answer()
 
 
 @tower_router.callback_query(F.data == "tower_back_select")
 async def tower_back_select(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     from payments import storage as pay_storage
     await state.clear()
     await show_tower_menu(callback, pay_storage)
@@ -593,6 +611,7 @@ async def tower_cell_handler(callback: CallbackQuery, state: FSMContext):
                 parse_mode=ParseMode.HTML,
                 reply_markup=build_tower_keyboard(session, game_over=True)
             )
+            set_owner_fn(callback.message.message_id, user_id)
             await callback.answer("💥 Бомба!")
 
         else:
@@ -649,6 +668,7 @@ async def tower_cell_handler(callback: CallbackQuery, state: FSMContext):
                         )],
                     ])
                 )
+                set_owner_fn(callback.message.message_id, user_id)
                 await callback.answer("🏆 Победа!")
 
             else:
@@ -737,6 +757,7 @@ async def tower_cashout(callback: CallbackQuery, state: FSMContext):
             )],
         ])
     )
+    set_owner_fn(callback.message.message_id, user_id)
     await callback.answer(f"💰 +{winnings}!")
 
 
