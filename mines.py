@@ -8,6 +8,13 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
 
+# База данных
+try:
+    from database import save_game_result as db_save_game_result, update_balance as db_update_balance
+except ImportError:
+    async def db_save_game_result(user_id, game_name, score): pass
+    async def db_update_balance(user_id, amount): return None
+
 # Реферальная система
 try:
     from referrals import notify_referrer_commission
@@ -638,6 +645,8 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
             # Записываем в лидерборд: ставка в оборот, выигрыш = 0
             name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
             record_game_result(user_id, name, bet, 0.0)
+            # Сохраняем проигрыш в БД
+            asyncio.create_task(db_save_game_result(user_id, 'mines', 0.0))
 
             balance = pay_storage.get_balance(user_id)
             await callback.message.edit_text(
@@ -685,6 +694,8 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
                 # Записываем в лидерборд
                 name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
                 record_game_result(user_id, name, bet, winnings)
+                # Сохраняем выигрыш в БД
+                asyncio.create_task(db_save_game_result(user_id, 'mines', winnings))
 
                 balance = pay_storage.get_balance(user_id)
                 await callback.message.edit_text(
@@ -769,6 +780,8 @@ async def mines_cashout(callback: CallbackQuery, state: FSMContext):
     # Записываем в лидерборд
     name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
     record_game_result(user_id, name, bet, winnings)
+    # Сохраняем кэшаут в БД
+    asyncio.create_task(db_save_game_result(user_id, 'mines', winnings))
 
     balance = pay_storage.get_balance(user_id)
     await callback.message.edit_text(
