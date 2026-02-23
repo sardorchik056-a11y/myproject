@@ -97,6 +97,7 @@ _user_locks: dict = {}          # user_id -> asyncio.Lock
 _bet_locks: dict    = {}        # user_id -> asyncio.Lock — для создания ставки
 _last_owner: dict   = {}        # user_id -> int — владелец последней игры (для post-game кнопок)
 _bet_in_progress: set = set()   # user_id — ставка сейчас обрабатывается
+_game_board_owner: dict = {}    # message_id -> owner_id — надёжная привязка доски к игроку
 
 
 def _get_user_lock(user_id: int) -> asyncio.Lock:
@@ -485,9 +486,11 @@ async def mines_manual_handler(callback: CallbackQuery, state: FSMContext):
 @mines_router.callback_query(F.data == "mines_play_again")
 async def mines_play_again(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
-    caller_id = callback.from_user.id
-    # Проверяем: caller должен быть последним владельцем СВОЕЙ игры
-    if not _check_post_game_owner(caller_id, caller_id):
+    caller_id  = callback.from_user.id
+    msg_id     = callback.message.message_id
+    # Проверяем: нажавший должен быть владельцем ЭТОЙ игровой доски
+    board_owner = _game_board_owner.get(msg_id)
+    if board_owner is None or board_owner != caller_id:
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
     _sessions.pop(caller_id, None)
@@ -500,13 +503,14 @@ async def mines_play_again(callback: CallbackQuery, state: FSMContext):
 async def mines_exit(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
+    msg_id    = callback.message.message_id
 
     # Ищем активную сессию caller-а
     session = _sessions.get(caller_id)
     owner_id = caller_id
 
     if session:
-        # Активная игра — проверяем что caller == owner
+        # Активная игра — проверяем что caller == owner сессии
         if not _check_owner(caller_id, session):
             await callback.answer("🚫 Это не ваша игра!", show_alert=True)
             return
@@ -518,9 +522,9 @@ async def mines_exit(callback: CallbackQuery, state: FSMContext):
         _sessions.pop(owner_id, None)
         _cancel_timeout(owner_id)
     else:
-        # Post-game кнопка — проверяем что caller когда-то был владельцем
-        # _last_owner[caller_id] == caller_id означает что это его последняя игра
-        if not _check_post_game_owner(caller_id, caller_id):
+        # Post-game кнопка — проверяем по message_id доски кто реальный владелец
+        board_owner = _game_board_owner.get(msg_id)
+        if board_owner is None or board_owner != caller_id:
             await callback.answer("🚫 Это не ваша игра!", show_alert=True)
             return
 
@@ -893,7 +897,9 @@ async def process_mines_bet(message: Message, state: FSMContext, storage):
         reply_markup=build_game_keyboard(session)
     )
     session['message_id'] = sent.message_id
-    set_owner_fn(sent.message_id, user_id)  # ← фиксируем владельца игрового поля
+    session['message_id'] = sent.message_id
+    set_owner_fn(sent.message_id, user_id)          # фиксируем владельца игрового поля
+    _game_board_owner[sent.message_id] = user_id    # надёжная привязка: доска → игрок
 
     # Запускаем таймер бездействия
     _start_timeout(user_id, message.bot, storage)
@@ -1006,6 +1012,8 @@ async def process_mines_command(message: Message, state: FSMContext, storage):
     )
     session['message_id'] = sent.message_id
     set_owner_fn(sent.message_id, user_id)  # ← фиксируем владельца игрового поля
-
+    session['message_id'] = sent.message_id
+    set_owner_fn(sent.message_id, user_id)          # фиксируем владельца игрового поля
+    _game_board_owner[sent.message_id] = user_id    # надёжная привязка: доска → игрок
     # Запускаем таймер бездействия
     _start_timeout(user_id, message.bot, storage)
