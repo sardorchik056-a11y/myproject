@@ -486,6 +486,9 @@ async def mines_manual_handler(callback: CallbackQuery, state: FSMContext):
 async def mines_play_again(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
+    if not is_owner_fn(callback.message.message_id, caller_id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
     # Проверяем: caller должен быть последним владельцем СВОЕЙ игры
     if not _check_post_game_owner(caller_id, caller_id):
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
@@ -500,6 +503,11 @@ async def mines_play_again(callback: CallbackQuery, state: FSMContext):
 async def mines_exit(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
+
+    # Первая линия защиты: проверяем по message_id кто владелец
+    if not is_owner_fn(callback.message.message_id, caller_id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
 
     # Ищем сессию: ключ _sessions — это owner_id, не caller_id
     # Сначала пробуем напрямую (если caller == owner)
@@ -901,6 +909,7 @@ async def process_mines_bet(message: Message, state: FSMContext, storage):
         reply_markup=build_game_keyboard(session)
     )
     session['message_id'] = sent.message_id
+    set_owner_fn(sent.message_id, user_id)  # ← фиксируем владельца игрового поля
 
     # Запускаем таймер бездействия
     _start_timeout(user_id, message.bot, storage)
@@ -1012,6 +1021,7 @@ async def process_mines_command(message: Message, state: FSMContext, storage):
         reply_markup=build_game_keyboard(session)
     )
     session['message_id'] = sent.message_id
+    set_owner_fn(sent.message_id, user_id)  # ← фиксируем владельца игрового поля
 
     # Запускаем таймер бездействия
     _start_timeout(user_id, message.bot, storage)
