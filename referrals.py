@@ -190,6 +190,12 @@ class ReferralStorage:
 referral_storage = ReferralStorage()
 _bot: Bot | None = None
 
+# Функции владельца — инжектируются из main.py при старте
+def _noop_set_owner(message_id: int, user_id: int): pass
+def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
+set_owner_fn = _noop_set_owner
+is_owner_fn  = _noop_is_owner
+
 
 def setup_referrals(bot: Bot):
     global _bot
@@ -343,39 +349,54 @@ referral_router = Router()
 
 @referral_router.callback_query(F.data == "referrals")
 async def referrals_main(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await callback.message.edit_text(
         text_referrals_main(callback.from_user.id),
         parse_mode=ParseMode.HTML,
         reply_markup=kb_referrals_main()
     )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
 @referral_router.callback_query(F.data == "ref_stats")
 async def ref_stats(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await callback.message.edit_text(
         text_ref_stats(callback.from_user.id),
         parse_mode=ParseMode.HTML,
         reply_markup=kb_ref_back()
     )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
 @referral_router.callback_query(F.data == "ref_link")
 async def ref_link(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     await state.clear()
     await callback.message.edit_text(
         text_ref_link(callback.from_user.id),
         parse_mode=ParseMode.HTML,
         reply_markup=kb_ref_back()
     )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
 @referral_router.callback_query(F.data == "ref_withdraw")
 async def ref_withdraw_start(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     ref_balance = referral_storage.get_ref_balance(callback.from_user.id)
 
     await state.set_state(ReferralWithdraw.entering_amount)
@@ -385,6 +406,7 @@ async def ref_withdraw_start(callback: CallbackQuery, state: FSMContext):
         parse_mode=ParseMode.HTML,
         reply_markup=kb_ref_cancel()
     )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
