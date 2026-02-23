@@ -445,6 +445,9 @@ async def tower_back_select(callback: CallbackQuery, state: FSMContext):
 async def tower_play_again(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
+    if not is_owner_fn(callback.message.message_id, caller_id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
     if not _check_post_game_owner(caller_id, caller_id):
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
@@ -458,6 +461,11 @@ async def tower_play_again(callback: CallbackQuery, state: FSMContext):
 async def tower_exit(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
+
+    # Первая линия защиты: проверяем по message_id кто владелец
+    if not is_owner_fn(callback.message.message_id, caller_id):
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
 
     session = _sessions.get(caller_id)
     owner_id = caller_id
@@ -828,6 +836,7 @@ async def process_tower_bet(message: Message, state: FSMContext, storage):
         reply_markup=build_tower_keyboard(session)
     )
     session['message_id'] = sent.message_id
+    set_owner_fn(sent.message_id, user_id)  # ← фиксируем владельца игрового поля
     _start_timeout(user_id, message.bot, storage)
 
 
@@ -926,4 +935,5 @@ async def process_tower_command(message: Message, state: FSMContext, storage):
         reply_markup=build_tower_keyboard(session)
     )
     session['message_id'] = sent.message_id
+    set_owner_fn(sent.message_id, user_id)  # ← фиксируем владельца игрового поля
     _start_timeout(user_id, message.bot, storage)
