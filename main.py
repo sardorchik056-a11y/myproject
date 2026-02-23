@@ -43,7 +43,7 @@ from referrals import (
 from leaders import leaders_router, show_leaders, update_user_name
 
 # Настройки
-BOT_TOKEN = "8531951028:AAFWUlHwpWfRrD2MvT4BqtexO7nFsQwFpcA"
+BOT_TOKEN = "8586332532:AAHX758cf6iOUpPNpY2sqseGBYsKJo9js4U"
 
 # ========== ССЫЛКИ ==========
 LINK_NEWS     = "https://t.me/FesteryNews"
