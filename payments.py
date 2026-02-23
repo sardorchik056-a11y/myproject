@@ -13,11 +13,18 @@ from aiogram.enums import ParseMode
 
 # База данных
 try:
-    from database import save_deposit, save_withdrawal, update_user_info
+    from database import (
+        save_deposit, save_withdrawal, update_user_info,
+        db_get_all_users, db_set_balance, db_update_field, db_get_user
+    )
 except ImportError:
     async def save_deposit(user_id, amount, crypto_invoice_id): pass
     async def save_withdrawal(user_id, amount): pass
     async def update_user_info(user_id, **kwargs): pass
+    def db_get_all_users(): return []
+    def db_set_balance(user_id, amount): pass
+    def db_update_field(user_id, field, value): pass
+    def db_get_user(user_id): return {}
 
 # Настройки Cryptobot
 CRYPTOBOT_API_KEY = "526036:AAmCKe81iaKXe5Js1BkxpwJ4ZKrPTWqPB0v"
@@ -50,18 +57,44 @@ class Storage:
         self.pending_action: Dict[int, str] = {}
 
         # ── Защита от дублей ──────────────────────────────────────────────────
-        # Множество уже зачисленных crypto_invoice_id (int) от Cryptobot
         self._paid_crypto_ids: set = set()
-        # Множество уже использованных internal invoice_id (str)
         self._processed_invoices: set = set()
-        # Блокировка на уровне пользователя: user_id → asyncio.Lock
         self._user_locks: Dict[int, asyncio.Lock] = {}
-        # Дедупликация запросов пополнения: хэш (user_id + amount + window) → timestamp
         self._deposit_requests: Dict[str, float] = {}
-        # Дедупликация запросов вывода: хэш (user_id + amount + window) → timestamp
         self._withdraw_requests: Dict[str, float] = {}
-        # Глобальная блокировка для операций с балансом
         self._balance_lock = asyncio.Lock()
+
+        # ── Загружаем всех пользователей из SQLite при старте ─────────────────
+        self._load_from_db()
+
+    def _load_from_db(self):
+        """Загружает всех пользователей из SQLite в память при запуске бота."""
+        try:
+            rows = db_get_all_users()
+            for row in rows:
+                uid = int(row["user_id"])
+                self.users[uid] = {
+                    'balance':           float(row.get("balance", 0.0) or 0.0),
+                    'first_name':        row.get("first_name", "") or "",
+                    'username':          row.get("username", "") or "",
+                    'last_withdrawal':   None,  # храним в памяти как datetime
+                    'total_deposits':    float(row.get("total_deposits", 0.0) or 0.0),
+                    'total_withdrawals': float(row.get("total_withdrawals", 0.0) or 0.0),
+                    'join_date':         row.get("join_date", datetime.now().strftime('%Y-%m-%d')),
+                }
+            logging.info(f"[Storage] Загружено пользователей из БД: {len(self.users)}")
+        except Exception as e:
+            logging.error(f"[Storage] Ошибка загрузки из БД: {e}")
+
+    def _save_balance_to_db(self, user_id: int):
+        """Синхронно сохраняет текущий баланс пользователя в SQLite."""
+        try:
+            user = self.users.get(user_id)
+            if user is None:
+                return
+            db_set_balance(user_id, user['balance'])
+        except Exception as e:
+            logging.error(f"[Storage] Ошибка сохранения баланса user={user_id}: {e}")
 
     # ── Блокировки на пользователя ────────────────────────────────────────────
     def get_user_lock(self, user_id: int) -> asyncio.Lock:
@@ -85,14 +118,13 @@ class Storage:
 
     # ── Дедупликация быстрых повторных запросов (двойное нажатие) ─────────────
     def _request_key(self, user_id: int, amount: float, action: str) -> str:
-        window = int(time.time() // 10)  # окно 10 секунд
+        window = int(time.time() // 10)
         raw = f"{action}:{user_id}:{amount:.4f}:{window}"
         return hashlib.sha256(raw.encode()).hexdigest()
 
     def is_duplicate_request(self, user_id: int, amount: float, action: str) -> bool:
         key = self._request_key(user_id, amount, action)
         now = time.time()
-        # Чистим устаревшие записи
         expired = [k for k, t in self._deposit_requests.items() if now - t > 30]
         for k in expired:
             self._deposit_requests.pop(k, None)
@@ -115,14 +147,28 @@ class Storage:
 
     def get_user(self, user_id: int) -> dict:
         if user_id not in self.users:
-            self.users[user_id] = {
-                'balance': 0.0,
-                'first_name': '',
-                'last_withdrawal': None,
-                'total_deposits': 0.0,
-                'total_withdrawals': 0.0,
-                'join_date': datetime.now().strftime('%Y-%m-%d'),
-            }
+            # Пробуем загрузить из БД (вдруг пользователь там уже есть)
+            try:
+                row = db_get_user(user_id)
+                self.users[user_id] = {
+                    'balance':           float(row.get("balance", 0.0) or 0.0),
+                    'first_name':        row.get("first_name", "") or "",
+                    'username':          row.get("username", "") or "",
+                    'last_withdrawal':   None,
+                    'total_deposits':    float(row.get("total_deposits", 0.0) or 0.0),
+                    'total_withdrawals': float(row.get("total_withdrawals", 0.0) or 0.0),
+                    'join_date':         row.get("join_date", datetime.now().strftime('%Y-%m-%d')),
+                }
+            except Exception:
+                self.users[user_id] = {
+                    'balance':           0.0,
+                    'first_name':        '',
+                    'username':          '',
+                    'last_withdrawal':   None,
+                    'total_deposits':    0.0,
+                    'total_withdrawals': 0.0,
+                    'join_date':         datetime.now().strftime('%Y-%m-%d'),
+                }
         return self.users[user_id]
 
     def get_balance(self, user_id: int) -> float:
@@ -133,12 +179,16 @@ class Storage:
         """Просто пополняет баланс. НЕ считается депозитом."""
         user = self.get_user(user_id)
         user['balance'] = round(user['balance'] + float(amount), 8)
+        # Сохраняем в БД
+        self._save_balance_to_db(user_id)
 
     def deduct_balance(self, user_id: int, amount: float) -> bool:
         """Просто списывает баланс. НЕ считается выводом."""
         user = self.get_user(user_id)
         if user['balance'] >= float(amount):
             user['balance'] = round(user['balance'] - float(amount), 8)
+            # Сохраняем в БД
+            self._save_balance_to_db(user_id)
             return True
         return False
 
@@ -158,6 +208,12 @@ class Storage:
         user = self.get_user(user_id)
         user['balance'] = round(user['balance'] + float(amount), 8)
         user['total_deposits'] = round(user.get('total_deposits', 0.0) + float(amount), 8)
+        # Сохраняем в БД
+        self._save_balance_to_db(user_id)
+        try:
+            db_update_field(user_id, "total_deposits", user['total_deposits'])
+        except Exception as e:
+            logging.error(f"[Storage] Ошибка сохранения total_deposits: {e}")
         return True
 
     def record_withdrawal(self, user_id: int, amount: float) -> bool:
@@ -166,6 +222,12 @@ class Storage:
         if user['balance'] >= float(amount):
             user['balance'] = round(user['balance'] - float(amount), 8)
             user['total_withdrawals'] = round(user.get('total_withdrawals', 0.0) + float(amount), 8)
+            # Сохраняем в БД
+            self._save_balance_to_db(user_id)
+            try:
+                db_update_field(user_id, "total_withdrawals", user['total_withdrawals'])
+            except Exception as e:
+                logging.error(f"[Storage] Ошибка сохранения total_withdrawals: {e}")
             return True
         return False
 
@@ -181,6 +243,11 @@ class Storage:
 
     def set_last_withdrawal(self, user_id: int):
         self.get_user(user_id)['last_withdrawal'] = datetime.now()
+        # Сохраняем дату в БД
+        try:
+            db_update_field(user_id, "last_withdrawal", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        except Exception as e:
+            logging.error(f"[Storage] Ошибка сохранения last_withdrawal: {e}")
 
     def create_invoice(self, user_id: int, amount: float, crypto_id: int, pay_url: str) -> str:
         invoice_id = str(uuid.uuid4())
@@ -311,14 +378,12 @@ async def check_payment_task(invoice_id: str):
             if not invoice:
                 return
 
-            # Защита: если invoice уже обработан — выходим
             if storage.is_invoice_processed(invoice_id):
                 logging.warning(f"[{invoice_id}] Уже обработан, выходим из задачи")
                 return
 
             if datetime.now() > invoice['expires_at']:
                 logging.info(f"[{invoice_id}] Счет истек на попытке {attempt}")
-                # Помечаем как обработанный чтобы не было повторов
                 storage.mark_invoice_processed(invoice_id)
                 if invoice.get('chat_id') and invoice.get('message_id'):
                     try:
@@ -341,10 +406,8 @@ async def check_payment_task(invoice_id: str):
             logging.info(f"[{invoice_id}] Попытка {attempt+1}: статус={status}")
 
             if status == 'paid':
-                # ── Атомарная защита от двойного зачисления ───────────────────
                 user_lock = storage.get_user_lock(invoice['user_id'])
                 async with user_lock:
-                    # Двойная проверка внутри локера
                     if storage.is_invoice_processed(invoice_id):
                         logging.warning(f"[{invoice_id}] Дюп: invoice уже обработан внутри локера")
                         return
@@ -354,7 +417,6 @@ async def check_payment_task(invoice_id: str):
                         storage.update_invoice_status(invoice_id, 'paid')
                         return
 
-                    # Зачисляем — record_deposit сам проверяет crypto_id
                     credited = storage.record_deposit(
                         invoice['user_id'],
                         invoice['amount'],
@@ -368,7 +430,6 @@ async def check_payment_task(invoice_id: str):
                         f"[{invoice_id}] ОПЛАЧЕН — начислено {invoice['amount']} USDT "
                         f"пользователю {invoice['user_id']}"
                     )
-                    # Сохраняем депозит в БД
                     asyncio.create_task(save_deposit(
                         invoice['user_id'],
                         invoice['amount'],
@@ -435,7 +496,6 @@ async def _process_deposit(message: Message, user_id: int):
             )
             return
 
-        # Защита от двойного нажатия / дублирующих запросов
         if storage.is_duplicate_request(user_id, amount, 'deposit'):
             logging.warning(f"[DUPE] Дублирующий запрос пополнения: user_id={user_id}, amount={amount}")
             await message.answer(
@@ -484,14 +544,12 @@ async def _process_deposit(message: Message, user_id: int):
         )
 
         storage.set_message_info(invoice_id, message.chat.id, sent_msg.message_id)
-        # Сохраняем информацию о пользователе в БД
         asyncio.create_task(update_user_info(
             user_id,
             first_name=message.from_user.first_name or '',
             username=message.from_user.username or ''
         ))
 
-        # Защита от запуска дублирующей задачи проверки
         if invoice_id not in storage.check_tasks:
             task = asyncio.create_task(check_payment_task(invoice_id))
             storage.check_tasks[invoice_id] = task
@@ -533,7 +591,6 @@ async def _process_withdraw(message: Message, user_id: int):
             )
             return
 
-        # Защита от двойного нажатия / дублирующих запросов вывода
         if storage.is_duplicate_request(user_id, amount, 'withdraw'):
             logging.warning(f"[DUPE] Дублирующий запрос вывода: user_id={user_id}, amount={amount}")
             await message.answer(
@@ -543,10 +600,8 @@ async def _process_withdraw(message: Message, user_id: int):
             )
             return
 
-        # Атомарное списание — берём локер пользователя
         user_lock = storage.get_user_lock(user_id)
         async with user_lock:
-            # Повторная проверка баланса внутри локера (мог измениться пока ждали)
             balance_now = storage.get_balance(user_id)
             if amount > balance_now:
                 await message.answer(
@@ -565,7 +620,6 @@ async def _process_withdraw(message: Message, user_id: int):
                 )
                 return
 
-            # Списываем только если чек создан успешно
             withdrawn = storage.record_withdrawal(user_id, amount)
 
         if not withdrawn:
@@ -578,7 +632,6 @@ async def _process_withdraw(message: Message, user_id: int):
             return
 
         storage.set_last_withdrawal(user_id)
-        # Сохраняем вывод в БД
         asyncio.create_task(save_withdrawal(user_id, amount))
 
         await message.answer(
