@@ -1,12 +1,21 @@
 import json
 import logging
 import os
+import asyncio
 from datetime import datetime
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ParseMode
+
+# База данных
+try:
+    from database import save_referral_commission, save_referral_withdrawal, register_referral as db_register_referral
+except ImportError:
+    async def save_referral_commission(referrer_id, referral_id, amount): pass
+    async def save_referral_withdrawal(user_id, amount): pass
+    async def db_register_referral(new_user_id, referrer_id): pass
 
 # ──────────────────────────────────────────────
 #  НАСТРОЙКИ
@@ -449,6 +458,9 @@ async def ref_withdraw_amount(message: Message, state: FSMContext):
         )
         return
 
+    # Сохраняем вывод реф-баланса в БД
+    asyncio.create_task(save_referral_withdrawal(message.from_user.id, amount))
+
     # Зачисляем на основной игровой баланс
     try:
         from payments import storage as pay_storage
@@ -487,6 +499,10 @@ async def notify_referrer_commission(referral_user_id: int, bet_amount: float):
     commission = referral_storage.accrue_commission(referral_user_id, bet_amount)
     if commission > 0:
         logging.info(f"[Referral] Комиссия {commission} USDT начислена тихо рефереру")
+        # Сохраняем комиссию в БД
+        referrer_id = referral_storage.get_referrer_id(referral_user_id)
+        if referrer_id:
+            asyncio.create_task(save_referral_commission(referrer_id, referral_user_id, commission))
 
 
 # ──────────────────────────────────────────────
@@ -502,6 +518,10 @@ async def process_start_referral(message: Message, start_param: str) -> bool:
 
     new_user_id = message.from_user.id
     registered  = referral_storage.register_referral(new_user_id, referrer_id)
+
+    if registered:
+        # Сохраняем связь реферал → реферер в БД
+        asyncio.create_task(db_register_referral(new_user_id, referrer_id))
 
     if registered and _bot is not None:
         try:
