@@ -505,28 +505,24 @@ async def mines_exit(callback: CallbackQuery, state: FSMContext):
     caller_id = callback.from_user.id
     msg_id    = callback.message.message_id
 
-    # Ищем активную сессию caller-а
-    session = _sessions.get(caller_id)
+    # Главная защита: только владелец этой доски может нажимать Выйти
+    board_owner = _game_board_owner.get(msg_id)
+    if board_owner is None or board_owner != caller_id:
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
+
+    # Ищем активную сессию (если игра ещё идёт — возвращаем ставку)
+    session  = _sessions.get(caller_id)
     owner_id = caller_id
 
     if session:
-        # Активная игра — проверяем что caller == owner сессии
-        if not _check_owner(caller_id, session):
-            await callback.answer("🚫 Это не ваша игра!", show_alert=True)
-            return
-        # Возвращаем ставку если игра была активна (не завершена)
         if not session.get('finishing'):
             bet = session.get('bet', 0)
             if bet > 0:
                 pay_storage.add_balance(owner_id, bet)
         _sessions.pop(owner_id, None)
         _cancel_timeout(owner_id)
-    else:
-        # Post-game кнопка — проверяем по message_id доски кто реальный владелец
-        board_owner = _game_board_owner.get(msg_id)
-        if board_owner is None or board_owner != caller_id:
-            await callback.answer("🚫 Это не ваша игра!", show_alert=True)
-            return
+    # Если сессии нет — post-game экран, board_owner уже проверен, просто выходим
 
     await state.clear()
     from main import get_games_menu, get_games_menu_text
@@ -547,27 +543,25 @@ async def mines_noop(callback: CallbackQuery):
 async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
+    msg_id    = callback.message.message_id
     idx       = int(callback.data.split("_")[-1])
 
-    # Ищем сессию: сначала по caller_id (владелец), потом по owner_id среди всех
-    session = _sessions.get(caller_id)
-    user_id = caller_id  # user_id = ключ в _sessions (= owner)
-
-    if not session:
-        # Проверяем — может это чужая игра?
-        for oid, s in list(_sessions.items()):
-            if s.get('owner_id') == caller_id:
-                session = s
-                user_id = oid
-                break
-
-    if not session:
-        # Нет вообще никакой активной игры — возможно чужая кнопка
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+    # Главная защита: проверяем кто владелец ЭТОЙ доски по message_id
+    board_owner = _game_board_owner.get(msg_id)
+    if board_owner is None or board_owner != caller_id:
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
 
-    # Защита: чужая игра
-    if not _check_owner(caller_id, session):
+    # Ищем сессию владельца доски
+    session = _sessions.get(caller_id)
+    user_id = caller_id
+
+    if not session:
+        await callback.answer("🚫 Игра не найдена!", show_alert=True)
+        return
+
+    # Доп. проверка: сессия привязана именно к этой доске
+    if session.get('message_id') != msg_id:
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
 
@@ -727,6 +721,13 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
 async def mines_cashout(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     user_id = callback.from_user.id
+    msg_id  = callback.message.message_id
+
+    # Главная защита: только владелец этой доски может кешаутить
+    board_owner = _game_board_owner.get(msg_id)
+    if board_owner is None or board_owner != user_id:
+        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
+        return
 
     # Берём локер — предотвращает двойной кэшаут
     lock = _get_user_lock(user_id)
@@ -737,8 +738,8 @@ async def mines_cashout(callback: CallbackQuery, state: FSMContext):
             await callback.answer("Игра не найдена.", show_alert=True)
             return
 
-        # Защита: чужая игра
-        if not _check_owner(callback.from_user.id, session):
+        # Доп. проверка: сессия привязана именно к этой доске
+        if session.get('message_id') != msg_id:
             await callback.answer("🚫 Это не ваша игра!", show_alert=True)
             return
 
