@@ -54,8 +54,14 @@ PERIOD_LABELS = {
 # _stats[user_id][date_str] = {"turnover": float, "wins": float, "name": str}
 _stats: dict = {}
 
-# Кто открыл лидерборд: message_id -> user_id
-_message_owners: dict = {}
+# Функция записи владельца — передаётся извне (из main.py) чтобы
+# использовать единый _msg_owners и не плодить параллельные словари.
+# Инициализируем заглушкой; main.py перезапишет через leaders.set_owner_fn.
+def _noop_set_owner(message_id: int, user_id: int): pass
+def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
+
+set_owner_fn    = _noop_set_owner
+is_owner_fn     = _noop_is_owner
 
 
 def _today_str() -> str:
@@ -224,9 +230,9 @@ def build_leaders_text(storage, leader_type: str, period: str) -> str:
 async def show_leaders(callback: CallbackQuery, storage_obj):
     text = build_leaders_text(storage_obj, "turnover", "today")
     kb   = get_leaders_keyboard("turnover", "today")
-    msg = await callback.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
-    # Запоминаем кто открыл это меню
-    _message_owners[callback.message.message_id] = callback.from_user.id
+    await callback.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    # Записываем владельца через общую функцию из main.py
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
@@ -246,8 +252,7 @@ async def leaders_switch(callback: CallbackQuery):
 
     # Проверка владельца: только тот кто открыл это меню может переключать
     msg_id = callback.message.message_id
-    owner  = _message_owners.get(msg_id)
-    if owner is not None and callback.from_user.id != owner:
+    if not is_owner_fn(msg_id, callback.from_user.id):
         await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
         return
 
