@@ -486,9 +486,6 @@ async def mines_manual_handler(callback: CallbackQuery, state: FSMContext):
 async def mines_play_again(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
-    if not is_owner_fn(callback.message.message_id, caller_id):
-        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
-        return
     # Проверяем: caller должен быть последним владельцем СВОЕЙ игры
     if not _check_post_game_owner(caller_id, caller_id):
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
@@ -504,23 +501,9 @@ async def mines_exit(callback: CallbackQuery, state: FSMContext):
     from payments import storage as pay_storage
     caller_id = callback.from_user.id
 
-    # Первая линия защиты: проверяем по message_id кто владелец
-    if not is_owner_fn(callback.message.message_id, caller_id):
-        await callback.answer("🚫 Это не ваша игра!", show_alert=True)
-        return
-
-    # Ищем сессию: ключ _sessions — это owner_id, не caller_id
-    # Сначала пробуем напрямую (если caller == owner)
+    # Ищем активную сессию caller-а
     session = _sessions.get(caller_id)
     owner_id = caller_id
-
-    if not session:
-        # Ищем среди всех активных сессий — вдруг caller нажал на чужую игру
-        for oid, s in list(_sessions.items()):
-            if s.get('owner_id') == caller_id:
-                session = s
-                owner_id = oid
-                break
 
     if session:
         # Активная игра — проверяем что caller == owner
@@ -535,7 +518,8 @@ async def mines_exit(callback: CallbackQuery, state: FSMContext):
         _sessions.pop(owner_id, None)
         _cancel_timeout(owner_id)
     else:
-        # Post-game кнопка — проверяем _last_owner
+        # Post-game кнопка — проверяем что caller когда-то был владельцем
+        # _last_owner[caller_id] == caller_id означает что это его последняя игра
         if not _check_post_game_owner(caller_id, caller_id):
             await callback.answer("🚫 Это не ваша игра!", show_alert=True)
             return
