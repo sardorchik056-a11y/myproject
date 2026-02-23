@@ -117,26 +117,32 @@ class ReferralStorage:
 
         key = str(new_user_id)
 
-        # 2. Если юзер уже есть в базе (пришёл раньше без реф-ссылки или уже чей-то реферал)
+        # 2. Если юзер уже есть в базе — проверяем только что он не чей-то реферал уже
         if key in self._data:
             record = self._data[key]
 
-            # Уже чей-то реферал
+            # Уже чей-то реферал — запрещаем
             if record.get("referrer_id") is not None:
                 logging.info(f"[Referral] {new_user_id} уже является рефералом {record['referrer_id']}")
                 return False
 
-            # Пришёл органически (без реф-ссылки) — навсегда заблокирован
-            if record.get("joined_organically", False):
-                logging.info(f"[Referral] {new_user_id} пришёл органически ранее — реф-регистрация запрещена")
-                return False
+            # УБРАНА блокировка по joined_organically:
+            # если пользователь пришёл без ссылки, но теперь зашёл по ссылке — разрешаем
 
-        # 3. Проверяем реферера
+        # 3. Реферера НЕ обязательно иметь в базе — создаём запись если нет
         referrer_key = str(referrer_id)
         if referrer_key not in self._data:
-            # Реферера вообще нет в базе — невалидная ссылка
-            logging.info(f"[Referral] Реферер {referrer_id} не найден в базе")
-            return False
+            # Создаём минимальную запись реферера
+            self._data[referrer_key] = {
+                "referrer_id":        None,
+                "referrals":          [],
+                "ref_balance":        0.0,
+                "total_earned":       0.0,
+                "total_withdrawn":    0.0,
+                "join_date":          datetime.now().strftime("%Y-%m-%d"),
+                "joined_organically": False,
+            }
+            logging.info(f"[Referral] Реферер {referrer_id} создан автоматически в базе")
 
         referrer_record = self._data[referrer_key]
 
@@ -147,7 +153,7 @@ class ReferralStorage:
 
         # 5. Регистрируем
         record = self._get(new_user_id)
-        record["referrer_id"]       = referrer_id
+        record["referrer_id"]        = referrer_id
         record["joined_organically"] = False
         referrer_record["referrals"].append(new_user_id)
         self._save()
