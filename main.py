@@ -1,1026 +1,538 @@
-import asyncio
+import json
 import logging
 import os
-import re
-import json
-from aiogram import Bot, Dispatcher, Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.filters.command import CommandStart
+import asyncio
+from datetime import datetime
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
 
-# Импортируем модуль платежей
-from payments import payment_router, setup_payments, storage, MIN_DEPOSIT, MIN_WITHDRAWAL
+# База данных
+try:
+    from database import save_referral_commission, save_referral_withdrawal, register_referral as db_register_referral
+except ImportError:
+    async def save_referral_commission(referrer_id, referral_id, amount): pass
+    async def save_referral_withdrawal(user_id, amount): pass
+    async def db_register_referral(new_user_id, referrer_id): pass
 
-# Импортируем игровой модуль
-from game import (
-    BettingGame, show_dice_menu, show_basketball_menu, show_football_menu,
-    show_darts_menu, show_bowling_menu, show_exact_number_menu, request_amount,
-    cancel_bet, is_bet_command, handle_text_bet_command
-)
+# ──────────────────────────────────────────────
+#  НАСТРОЙКИ
+# ──────────────────────────────────────────────
+REFERRAL_PERCENT   = 2
+MIN_REF_WITHDRAWAL = 1.0
+REFERRALS_FILE     = "referrals.json"
 
-# Импортируем модуль Мины
-from mines import (
-    mines_router, MinesGame, show_mines_menu, process_mines_bet, process_mines_command
-)
-
-# Импортируем модуль Башня
-from tower import (
-    tower_router, TowerGame, show_tower_menu, process_tower_bet, process_tower_command
-)
-
-# Импортируем реферальный модуль
-from referrals import (
-    referral_router, referral_storage,
-    setup_referrals, process_start_referral,
-    ReferralWithdraw, ref_withdraw_amount
-)
-
-# Импортируем модуль лидеров
-from leaders import leaders_router, show_leaders, update_user_name
-import leaders as _leaders_module
-import mines as _mines_module
-import tower as _tower_module
-import referrals as _referrals_module
-
-# Настройки
-BOT_TOKEN = "8586332532:AAHX758cf6iOUpPNpY2sqseGBYsKJo9js4U"
-
-# ========== ССЫЛКИ ==========
-LINK_NEWS     = "https://t.me/FesteryNews"
-LINK_CHAT     = "https://t.me/FesteryCasChat"
-LINK_INSTRUCT = "https://t.me/Festery_info"
-LINK_SUPPORT  = "https://t.me/Xyloth_1337"
-
-# ID кастомных эмодзи
-EMOJI_WELCOME    = "5199885118214255386"
-EMOJI_PROFILE    = "5906581476639513176"
+# ──────────────────────────────────────────────
+#  EMOJI
+# ──────────────────────────────────────────────
 EMOJI_PARTNERS   = "5906986955911993888"
-EMOJI_GAMES      = "5424972470023104089"
-EMOJI_LEADERS    = "5440539497383087970"
-EMOJI_ABOUT      = "5251203410396458957"
-EMOJI_CRYPTOBOT  = "5427054176246991778"
 EMOJI_BACK       = "5906771962734057347"
-EMOJI_DEVELOPMENT= "5445355530111437729"
-EMOJI_WALLET     = "5443127283898405358"
-EMOJI_STATS      = "5197288647275071607"
+EMOJI_WALLET     = "5445355530111437729"
 EMOJI_WITHDRAWAL = "5445355530111437729"
-EMOJI_MINES      = "5307996024738395492"
-EMOJI_PROMO      = "5444856076954520455"
-EMOJI_INSTRUCT   = "5334544901428229844"
-EMOJI_CHANNEL    = "5424818078833715060"
-EMOJI_CHAT       = "5443038326535759644"
-EMOJI_SUPORT     = "5907025791006283345"
-EMOJI_PEREXOD    = "5906839307821259375"
-
-# Кастомные callback_data для игр
-GAME_CALLBACKS = {
-    'dice':        'custom_dice_001',
-    'basketball':  'custom_basketball_002',
-    'football':    'custom_football_003',
-    'darts':       'custom_darts_004',
-    'bowling':     'custom_bowling_005',
-    'exact_number':'custom_exact_006',
-    'back_to_games':'custom_back_games_007'
-}
-
-# File ID для приветственного стикера
-WELCOME_STICKER_ID = "CAACAgIAAxkBAAIGUWmRflo7gmuMF5MNUcs4LGpyA93yAAKaDAAC753ZS6lNRCGaKqt5OgQ"
-
-# ID администраторов
-ADMIN_IDS = [8118184388, 8115654734]
-
-# Путь к файлу промокодов
-PROMO_FILE = "promos.json"
-
-# Лимиты перевода
-MIN_TRANSFER = 0.02
-MAX_TRANSFER = 10000
-
-# Паттерн для команды перевода (строго в начале строки, без лишнего текста)
-TRANSFER_PATTERN = re.compile(r'^(?:/)?(?:pay|дать)\s+([\d.,]+)$', re.IGNORECASE)
-
-# Локеры для переводов — защита от двойной отправки
-_transfer_locks: dict = {}  # user_id -> asyncio.Lock
-
-def _get_transfer_lock(user_id: int) -> asyncio.Lock:
-    if user_id not in _transfer_locks:
-        _transfer_locks[user_id] = asyncio.Lock()
-    return _transfer_locks[user_id]
-
-# Роутер
-router = Router()
-
-# Экземпляр игры
-betting_game = None
-
-# Словарь владельцев сообщений — защита от нажатия чужих кнопок
-# message_id -> user_id (кто вызвал это сообщение)
-_msg_owners: dict = {}
-
-def _set_msg_owner(message_id: int, user_id: int):
-    _msg_owners[message_id] = user_id
-
-def _is_msg_owner(message_id: int, user_id: int) -> bool:
-    owner = _msg_owners.get(message_id)
-    if owner is None:
-        return True   # сообщение без записи — пускаем (старые сообщения)
-    return owner == user_id
+EMOJI_LEADERS    = "5440539497383087970"
+EMOJI_STATS      = "5231200819986047254"
+EMOJI_COIN       = "5197434882321567830"
+EMOJI_CHECK      = "5197269100878907942"
+EMOJI_NUMBER     = "5271604874419647061"
+EMOJI_REF_USER   = "5906581476639513176"   # замени на нужный
 
 
-def _inject_leaders_owner_fns():
-    """Передаём во все дочерние модули ссылки на единый словарь владельцев."""
-    _leaders_module.set_owner_fn   = _set_msg_owner
-    _leaders_module.is_owner_fn    = _is_msg_owner
-    _mines_module.set_owner_fn     = _set_msg_owner
-    _mines_module.is_owner_fn      = _is_msg_owner
-    _tower_module.set_owner_fn     = _set_msg_owner
-    _tower_module.is_owner_fn      = _is_msg_owner
-    _referrals_module.set_owner_fn = _set_msg_owner
-    _referrals_module.is_owner_fn  = _is_msg_owner
+# ──────────────────────────────────────────────
+#  FSM
+# ──────────────────────────────────────────────
+class ReferralWithdraw(StatesGroup):
+    entering_amount = State()
 
 
-# ========== FSM ==========
-class PromoState(StatesGroup):
-    entering_code = State()
+# ──────────────────────────────────────────────
+#  ХРАНИЛИЩЕ РЕФЕРАЛОВ
+# ──────────────────────────────────────────────
+class ReferralStorage:
+    def __init__(self, filepath: str = REFERRALS_FILE):
+        self.filepath = filepath
+        self._data: dict = {}
+        self._load()
+
+    def _load(self):
+        if os.path.exists(self.filepath):
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    self._data = json.load(f)
+            except Exception as ex:
+                logging.error(f"[ReferralStorage] Ошибка загрузки: {ex}")
+                self._data = {}
+
+    def _save(self):
+        try:
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                json.dump(self._data, f, ensure_ascii=False, indent=2)
+        except Exception as ex:
+            logging.error(f"[ReferralStorage] Ошибка сохранения: {ex}")
+
+    def _get(self, user_id: int) -> dict:
+        key = str(user_id)
+        if key not in self._data:
+            self._data[key] = {
+                "referrer_id":     None,
+                "referrals":       [],
+                "ref_balance":     0.0,
+                "total_earned":    0.0,
+                "total_withdrawn": 0.0,
+                "join_date":       datetime.now().strftime("%Y-%m-%d"),
+                # joined_organically=True означает что юзер пришёл сам,
+                # без реф-ссылки — он навсегда заблокирован от реф-системы
+                "joined_organically": False,
+            }
+            self._save()
+        return self._data[key]
+
+    def mark_organic(self, user_id: int):
+        """
+        Вызывается из main.py когда /start пришёл БЕЗ реф-параметра.
+        Если запись уже есть — ничего не меняем (юзер уже был зарегистрирован).
+        Если записи нет — создаём с флагом joined_organically=True.
+        """
+        key = str(user_id)
+        if key not in self._data:
+            # Первый визит, без реф-ссылки — помечаем навсегда
+            self._data[key] = {
+                "referrer_id":        None,
+                "referrals":          [],
+                "ref_balance":        0.0,
+                "total_earned":       0.0,
+                "total_withdrawn":    0.0,
+                "join_date":          datetime.now().strftime("%Y-%m-%d"),
+                "joined_organically": True,
+            }
+            self._save()
+            logging.info(f"[Referral] {user_id} пришёл без реф-ссылки → заблокирован от реф-системы")
+
+    def register_referral(self, new_user_id: int, referrer_id: int) -> bool:
+        # 1. Нельзя быть рефералом самого себя
+        if new_user_id == referrer_id:
+            logging.info(f"[Referral] {new_user_id} попытался стать рефералом самого себя")
+            return False
+
+        key = str(new_user_id)
+
+        # 2. Если юзер уже есть в базе (пришёл раньше без реф-ссылки или уже чей-то реферал)
+        if key in self._data:
+            record = self._data[key]
+
+            # Уже чей-то реферал
+            if record.get("referrer_id") is not None:
+                logging.info(f"[Referral] {new_user_id} уже является рефералом {record['referrer_id']}")
+                return False
+
+            # Пришёл органически (без реф-ссылки) — навсегда заблокирован
+            if record.get("joined_organically", False):
+                logging.info(f"[Referral] {new_user_id} пришёл органически ранее — реф-регистрация запрещена")
+                return False
+
+        # 3. Проверяем реферера
+        referrer_key = str(referrer_id)
+        if referrer_key not in self._data:
+            # Реферера вообще нет в базе — невалидная ссылка
+            logging.info(f"[Referral] Реферер {referrer_id} не найден в базе")
+            return False
+
+        referrer_record = self._data[referrer_key]
+
+        # 4. Защита от дублей в списке рефералов реферера
+        if new_user_id in referrer_record["referrals"]:
+            logging.info(f"[Referral] {new_user_id} уже в списке рефералов {referrer_id}")
+            return False
+
+        # 5. Регистрируем
+        record = self._get(new_user_id)
+        record["referrer_id"]       = referrer_id
+        record["joined_organically"] = False
+        referrer_record["referrals"].append(new_user_id)
+        self._save()
+        logging.info(f"[Referral] {new_user_id} → реферал {referrer_id} ✅")
+        return True
+
+    def accrue_commission(self, referral_user_id: int, bet_amount: float) -> float:
+        record = self._get(referral_user_id)
+        referrer_id = record["referrer_id"]
+        if referrer_id is None:
+            return 0.0
+        commission = round(bet_amount * REFERRAL_PERCENT / 100, 4)
+        ref_record = self._get(referrer_id)
+        ref_record["ref_balance"]  = round(ref_record["ref_balance"]  + commission, 4)
+        ref_record["total_earned"] = round(ref_record["total_earned"] + commission, 4)
+        self._save()
+        logging.info(f"[Referral] +{commission} USDT → {referrer_id} (ставка {referral_user_id})")
+        return commission
+
+    def get_ref_balance(self, user_id: int) -> float:
+        return self._get(user_id)["ref_balance"]
+
+    def get_stats(self, user_id: int) -> dict:
+        r = self._get(user_id)
+        return {
+            "referrals_count": len(r["referrals"]),
+            "referrals_list":  r["referrals"],
+            "ref_balance":     r["ref_balance"],
+            "total_earned":    r["total_earned"],
+            "total_withdrawn": r["total_withdrawn"],
+        }
+
+    def withdraw_ref_balance(self, user_id: int, amount: float) -> bool:
+        record = self._get(user_id)
+        if record["ref_balance"] < amount:
+            return False
+        record["ref_balance"]     = round(record["ref_balance"]     - amount, 4)
+        record["total_withdrawn"] = round(record["total_withdrawn"] + amount, 4)
+        self._save()
+        return True
+
+    def get_referrer_id(self, user_id: int) -> int | None:
+        return self._get(user_id)["referrer_id"]
 
 
-# ========== ПРОМОКОДЫ: ХРАНИЛИЩЕ ==========
-def load_promos() -> dict:
-    if not os.path.exists(PROMO_FILE):
-        return {}
-    try:
-        with open(PROMO_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+# ──────────────────────────────────────────────
+#  ГЛОБАЛЬНЫЙ ЭКЗЕМПЛЯР
+# ──────────────────────────────────────────────
+referral_storage = ReferralStorage()
+_bot: Bot | None = None
+
+# Функции владельца — инжектируются из main.py при старте
+def _noop_set_owner(message_id: int, user_id: int): pass
+def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
+set_owner_fn = _noop_set_owner
+is_owner_fn  = _noop_is_owner
 
 
-def save_promos(data: dict):
-    with open(PROMO_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def setup_referrals(bot: Bot):
+    global _bot
+    _bot = bot
 
 
-def promo_create(code: str, amount: float, activations: int) -> bool:
-    data = load_promos()
-    code = code.upper().strip()
-    if code in data:
-        return False
-    data[code] = {"amount": amount, "activations": activations, "used_by": []}
-    save_promos(data)
-    return True
+# ──────────────────────────────────────────────
+#  УТИЛИТЫ
+# ──────────────────────────────────────────────
+def get_referral_link(user_id: int) -> str:
+    bot_username = os.getenv("BOT_USERNAME", "YourBotUsername")
+    return f"https://t.me/{bot_username}?start=ref_{user_id}"
 
 
-def promo_use(code: str, user_id: int):
-    """Возвращает (ok: bool, amount: float, reason: str)"""
-    data = load_promos()
-    code = code.upper().strip()
-    if code not in data:
-        return False, 0, "not_found"
-    promo = data[code]
-    if user_id in promo["used_by"]:
-        return False, 0, "already_used"
-    if promo["activations"] <= 0:
-        return False, 0, "expired"
-    promo["used_by"].append(user_id)
-    promo["activations"] -= 1
-    save_promos(data)
-    return True, promo["amount"], "ok"
+def e(eid: str, fallback: str = "•") -> str:
+    return f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>'
 
 
-# ========== ПРОВЕРКА КОМАНДЫ БАЛАНСА ==========
-def is_balance_command(text: str) -> bool:
-    if not text:
-        return False
-    t = text.lstrip('/')
-    commands = {'б', 'b', 'бал', 'bal', 'баланс', 'balance'}
-    return t.lower() in commands
-
-
-# ========== СИНХРОНИЗАЦИЯ БАЛАНСОВ ==========
-def sync_balances(user_id: int):
-    return storage.get_balance(user_id)
-
-
-# ========== СТРОКА ССЫЛОК (переиспользуется во всех текстах) ==========
-def links_line() -> str:
-    return (
-        f'<tg-emoji emoji-id="{EMOJI_SUPORT}">💬</tg-emoji> <b>'
-        f'<a href="{LINK_SUPPORT}">Тех. поддержка</a> | '
-        f'<a href="{LINK_CHAT}">Наш чат</a> | '
-        f'<a href="{LINK_NEWS}">Новости</a></b>'
-    )
-
-
-# ========== КЛАВИАТУРЫ ==========
-def get_main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Профиль",  callback_data="profile",   icon_custom_emoji_id=EMOJI_PROFILE),
-            InlineKeyboardButton(text="Партнёры", callback_data="referrals", icon_custom_emoji_id=EMOJI_PARTNERS)
-        ],
-        [
-            InlineKeyboardButton(text="Игры",   callback_data="games",   icon_custom_emoji_id=EMOJI_GAMES),
-            InlineKeyboardButton(text="Лидеры", callback_data="leaders", icon_custom_emoji_id=EMOJI_LEADERS)
-        ],
-        [
-            InlineKeyboardButton(text="Промокоды", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_PROMO),
-            InlineKeyboardButton(text="О проекте", callback_data="about",      icon_custom_emoji_id=EMOJI_ABOUT)
-        ],
-        [
-            InlineKeyboardButton(text="Инструкция", url=LINK_INSTRUCT, icon_custom_emoji_id=EMOJI_INSTRUCT)
-        ]
-    ])
-
-
-def get_games_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🎲 Кубик",     callback_data=GAME_CALLBACKS['dice']),
-            InlineKeyboardButton(text="🏀 Баскетбол", callback_data=GAME_CALLBACKS['basketball'])
-        ],
-        [
-            InlineKeyboardButton(text="⚽️ Футбол", callback_data=GAME_CALLBACKS['football']),
-            InlineKeyboardButton(text="🎯 Дартс",  callback_data=GAME_CALLBACKS['darts'])
-        ],
-        [
-            InlineKeyboardButton(text="🎳 Боулинг", callback_data=GAME_CALLBACKS['bowling'])
-        ],
-        [
-            InlineKeyboardButton(text="💣 Мины", callback_data="mines_menu"),
-            InlineKeyboardButton(text="🏰 Башня", callback_data="tower_menu")
-        ],
-        [
-            InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
-        ]
-    ])
-
-
-def get_profile_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="Пополнить", callback_data="deposit",  icon_custom_emoji_id=EMOJI_WALLET),
-            InlineKeyboardButton(text="Вывести",   callback_data="withdraw", icon_custom_emoji_id=EMOJI_WITHDRAWAL)
-        ],
-        [
-            InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
-        ]
-    ])
-
-
-def get_cancel_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Отмена", callback_data="profile", icon_custom_emoji_id=EMOJI_BACK)
-    ]])
-
-
-def get_balance_menu():
-    bot_username = os.getenv("BOT_USERNAME", "your_bot")
+# ──────────────────────────────────────────────
+#  КЛАВИАТУРЫ
+# ──────────────────────────────────────────────
+def kb_referrals_main() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
-                text="Пополнить",
-                url=f"https://t.me/{bot_username}?start=deposit",
-                icon_custom_emoji_id=EMOJI_WALLET
+                text="Статистика",
+                callback_data="ref_stats",
+                icon_custom_emoji_id=EMOJI_STATS
             ),
             InlineKeyboardButton(
                 text="Вывести",
-                url=f"https://t.me/{bot_username}?start=withdraw",
-                icon_custom_emoji_id=EMOJI_WITHDRAWAL
-            )
-        ]
-    ])
-
-
-def get_promo_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
+                callback_data="ref_withdraw",
+                icon_custom_emoji_id=EMOJI_WALLET
+            ),
+        ],
         [
             InlineKeyboardButton(
-                text="Ввести промокод",
-                callback_data="promo_enter",
-                icon_custom_emoji_id=EMOJI_PROMO
-            )
+                text="Моя ссылка",
+                callback_data="ref_link",
+                icon_custom_emoji_id=EMOJI_NUMBER
+            ),
         ],
         [
             InlineKeyboardButton(
                 text="Назад",
                 callback_data="back_to_main",
                 icon_custom_emoji_id=EMOJI_BACK
-            )
-        ]
+            ),
+        ],
     ])
 
 
-def get_promo_cancel_menu():
+def kb_ref_back() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
-            text="Отмена",
-            callback_data="promo_menu",
+            text="Назад",
+            callback_data="referrals",
             icon_custom_emoji_id=EMOJI_BACK
         )
     ]])
 
 
-# ========== ТЕКСТЫ ==========
-def get_main_menu_text():
-    return (
-        f'<blockquote><tg-emoji emoji-id="5197288647275071607">🎰</tg-emoji> <b>Честные игры — прозрачные правила и реальные шансы на победу.</b>\n'
-        f'<b>Без скрытых условий, всё открыто и по-настоящему честно.</b></blockquote>\n\n'
-        f'<blockquote><tg-emoji emoji-id="5195033767969839232">⚡</tg-emoji> <b>Быстрые выплаты — моментальный вывод средств без задержек.</b>\n'
-        f'<tg-emoji emoji-id="5445355530111437729">💎</tg-emoji> <b>Выводы через <tg-emoji emoji-id="{EMOJI_CRYPTOBOT}">🔵</tg-emoji> <a href="https://t.me/send">Cryptobot</a></b></blockquote>\n\n'
-        f'{links_line()}\n'
-    )
+def kb_ref_cancel() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(
+            text="Отмена",
+            callback_data="referrals",
+            icon_custom_emoji_id=EMOJI_BACK
+        )
+    ]])
 
 
-def get_games_menu_text(user_id: int):
-    balance = sync_balances(user_id)
-    return (
-        f'<blockquote><tg-emoji emoji-id="{EMOJI_GAMES}">🎮</tg-emoji> <b>Игры</b></blockquote>\n\n'
-        f'<blockquote><tg-emoji emoji-id="5278467510604160626">🎮</tg-emoji>:<code>{balance:.2f}</code><tg-emoji emoji-id="5197434882321567830">🎮</tg-emoji></blockquote>\n\n'
-        f'<blockquote><b>Выберите игру:</b></blockquote>\n\n'
-        f'{links_line()}\n'
-    )
+# ──────────────────────────────────────────────
+#  ТЕКСТЫ
+# ──────────────────────────────────────────────
+def text_referrals_main(user_id: int) -> str:
+    stats = referral_storage.get_stats(user_id)
+    link  = get_referral_link(user_id)
 
-
-def get_profile_text(user_first_name: str, days_in_project: int, user_id: int):
-    balance = sync_balances(user_id)
-    user_data = storage.get_user(user_id)
-    total_deposits    = user_data.get('total_deposits', 0)
-    total_withdrawals = user_data.get('total_withdrawals', 0)
-
-    if 11 <= days_in_project <= 19:
-        days_text = "дней"
-    elif days_in_project % 10 == 1:
-        days_text = "день"
-    elif days_in_project % 10 in [2, 3, 4]:
-        days_text = "дня"
+    cnt = stats["referrals_count"]
+    if 11 <= cnt % 100 <= 19:
+        ref_word = "рефералов"
+    elif cnt % 10 == 1:
+        ref_word = "реферал"
+    elif cnt % 10 in (2, 3, 4):
+        ref_word = "реферала"
     else:
-        days_text = "дней"
+        ref_word = "рефералов"
 
     return (
-        f'<blockquote><b><tg-emoji emoji-id="{EMOJI_PROFILE}">👤</tg-emoji> Профиль</b></blockquote>\n\n'
-        f'<blockquote>\n'
-        f'<b><tg-emoji emoji-id="5278467510604160626">💰</tg-emoji>:<code>{balance:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
-        f'<tg-emoji emoji-id="5443127283898405358">📥</tg-emoji> Депозитов: <b><code>{total_deposits:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
-        f'<tg-emoji emoji-id="5445355530111437729">📤</tg-emoji> Выводов: <b><code>{total_withdrawals:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
-        f'<tg-emoji emoji-id="5274055917766202507">📅</tg-emoji> В проекте: <b><code>{days_in_project} {days_text}</code></b>\n'
-        f'</blockquote>\n\n'
-        f'{links_line()}\n'
-    )
-
-
-# ========== СТАРТ ==========
-@router.message(CommandStart())
-async def cmd_start(message: Message):
-    try:
-        args = message.text.split(maxsplit=1)
-        param = args[1] if len(args) > 1 else ""
-
-        if param == "deposit":
-            storage.get_user(message.from_user.id)
-            storage.set_pending(message.from_user.id, 'deposit')
-            await message.answer(
-                f'<b><tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Пополнение баланса</b>\n\n'
-                f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>',
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_cancel_menu()
-            )
-            return
-
-        elif param == "withdraw":
-            storage.get_user(message.from_user.id)
-            storage.set_pending(message.from_user.id, 'withdraw')
-            await message.answer(
-                f'<b><tg-emoji emoji-id="{EMOJI_WITHDRAWAL}">💸</tg-emoji> Вывод средств</b>\n\n'
-                f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму вывода:</i></blockquote>',
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_cancel_menu()
-            )
-            return
-
-        elif param.startswith("ref_"):
-            await process_start_referral(message, param)
-
-        else:
-            referral_storage.mark_organic(message.from_user.id)
-
-        storage.get_user(message.from_user.id)
-        sync_balances(message.from_user.id)
-        update_user_name(storage, message.from_user.id, message.from_user.first_name or "")
-
-        await message.answer_sticker(sticker=WELCOME_STICKER_ID)
-        sent = await message.answer(
-            get_main_menu_text(),
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu()
-        )
-        _set_msg_owner(sent.message_id, message.from_user.id)
-    except Exception as e:
-        logging.error(f"Error in start: {e}")
-        await message.answer("Произошла ошибка. Попробуйте позже.")
-
-
-# ========== АДМИН: /add ==========
-@router.message(F.text.startswith("/add") & ~F.text.startswith("/addpromo"))
-async def cmd_add_balance(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Нет доступа.")
-        return
-
-    parts = message.text.split()
-    if len(parts) != 3:
-        await message.answer(
-            "<b>⚙️ Использование:</b>\n"
-            "<code>/add [user_id] [сумма]</code>\n\n"
-            "<b>Пример:</b> <code>/add 123456789 100</code>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    try:
-        target_id = int(parts[1])
-        amount    = float(parts[2])
-    except ValueError:
-        await message.answer("❌ Неверный формат. ID должен быть числом, сумма — числом.")
-        return
-
-    if amount <= 0:
-        await message.answer("❌ Сумма должна быть больше 0.")
-        return
-
-    storage.get_user(target_id)
-    storage.add_balance(target_id, amount)
-    new_balance = storage.get_balance(target_id)
-
-    await message.answer(
-        f"<b>✅ Баланс выдан</b>\n\n"
+        f"{e(EMOJI_PARTNERS,'🤝')} <b>Реферальная программа</b>\n\n"
         f"<blockquote>"
-        f"👤 ID: <code>{target_id}</code>\n"
-        f"➕ Выдано: <code>{amount:.2f}</code>\n"
-        f"💰 Новый баланс: <code>{new_balance:.2f}</code>"
-        f"</blockquote>",
-        parse_mode=ParseMode.HTML
+        f"<tg-emoji emoji-id=\"5332724926216428039\">🎰</tg-emoji><b>Приглашено:</b> <code>{cnt} {ref_word}</code>\n"
+        f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji><b>Реф-баланс:</b> <code>{stats['ref_balance']:.4f}</code> "
+        f"<tg-emoji emoji-id=\"5197434882321567830\">🎰</tg-emoji>\n"
+        f"<tg-emoji emoji-id=\"5427168083074628963\">🎰</tg-emoji><b>Заработано:</b> <code>{stats['total_earned']:.4f}</code> "
+        f"{e(EMOJI_COIN,'💎')}\n"
+        f"{e(EMOJI_WITHDRAWAL,'📤')} <b>Выведено:</b> <code>{stats['total_withdrawn']:.4f}</code> "
+        f"{e(EMOJI_COIN,'💎')}\n"
+        f"</blockquote>\n\n"
+        f"<blockquote>"
+        f"<tg-emoji emoji-id=\"5294167145079395967\">🎰</tg-emoji><b>Получайте 2% от выигрышей друзей!</b>\n"
+        f"</blockquote>\n\n"
+        f"<blockquote>"
+        f"<tg-emoji emoji-id=\"5271604874419647061\">🎰</tg-emoji><b>Ваша ссылка:</b>\n"
+        f"<code>{link}</code>"
+        f"</blockquote>"
     )
-    logging.info(f"Админ {message.from_user.id} выдал {amount} пользователю {target_id}. Новый баланс: {new_balance}")
 
 
-# ========== АДМИН: /addpromo ==========
-@router.message(F.text.startswith("/addpromo"))
-async def cmd_add_promo(message: Message):
-    if message.from_user.id not in ADMIN_IDS:
-        await message.answer("❌ Нет доступа.")
+def text_ref_stats(user_id: int) -> str:
+    stats = referral_storage.get_stats(user_id)
+    refs  = stats["referrals_list"]
+
+    last_5 = list(reversed(refs[-5:])) if refs else []
+    lines = [
+        f"{e(EMOJI_REF_USER,'👤')} <code>{uid}</code>"
+        for uid in last_5
+    ]
+    refs_block = "\n".join(lines) if lines else "  <i>Рефералов пока нет</i>"
+    more = f"\n{e(EMOJI_STATS,'📊')} <i>... и ещё {len(refs) - 5}</i>" if len(refs) > 5 else ""
+
+    return (
+        f"{e(EMOJI_STATS,'📊')} <b>Детальная статистика</b>\n\n"
+        f"<blockquote>"
+        f"<tg-emoji emoji-id=\"5278467510604160626\">🎰</tg-emoji>Реф-баланс: <code>{stats['ref_balance']:.4f}</code>\n"
+        f"<tg-emoji emoji-id=\"5427168083074628963\">🎰</tg-emoji>Заработано: <code>{stats['total_earned']:.4f}</code>\n"
+        f"{e(EMOJI_WITHDRAWAL,'📤')}Выведено: <code>{stats['total_withdrawn']:.4f}</code>\n"
+        f"<tg-emoji emoji-id=\"5332724926216428039\">🎰</tg-emoji>рефералов: <code>{stats['referrals_count']}</code>\n"
+        f"</blockquote>\n\n"
+        f"<blockquote>"
+        f"<b>Последние рефералы:</b>\n"
+        f"{refs_block}{more}"
+        f"</blockquote>"
+    )
+
+
+def text_ref_link(user_id: int) -> str:
+    link = get_referral_link(user_id)
+    return (
+        f"<blockquote><tg-emoji emoji-id=\"5271604874419647061\">🎰</tg-emoji><b>Реферальная ссылка</b></blockquote>\n\n"
+        f"<blockquote><code>{link}</code></blockquote>"
+    )
+
+
+# ──────────────────────────────────────────────
+#  ХЕНДЛЕРЫ
+# ──────────────────────────────────────────────
+referral_router = Router()
+
+
+@referral_router.callback_query(F.data == "referrals")
+async def referrals_main(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
         return
+    await state.clear()
+    await callback.message.edit_text(
+        text_referrals_main(callback.from_user.id),
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb_referrals_main()
+    )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
+    await callback.answer()
 
-    parts = message.text.split()
-    if len(parts) != 4:
-        await message.answer(
-            f'<b><tg-emoji emoji-id="{EMOJI_ABOUT}">📊</tg-emoji> Создание промокода</b>\n\n'
-            f'<blockquote><b>Использование:</b>\n'
-            f'<code>/addpromo [код] [сумма] [активации]</code>\n\n'
-            f'<b>Пример:</b>\n'
-            f'<code>/addpromo SUMMER25 50 100</code></blockquote>',
-            parse_mode=ParseMode.HTML
-        )
+
+@referral_router.callback_query(F.data == "ref_stats")
+async def ref_stats(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
         return
+    await state.clear()
+    await callback.message.edit_text(
+        text_ref_stats(callback.from_user.id),
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb_ref_back()
+    )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
+    await callback.answer()
 
-    code = parts[1].upper().strip()
+
+@referral_router.callback_query(F.data == "ref_link")
+async def ref_link(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
+    await state.clear()
+    await callback.message.edit_text(
+        text_ref_link(callback.from_user.id),
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb_ref_back()
+    )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
+    await callback.answer()
+
+
+@referral_router.callback_query(F.data == "ref_withdraw")
+async def ref_withdraw_start(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
+    ref_balance = referral_storage.get_ref_balance(callback.from_user.id)
+
+    await state.set_state(ReferralWithdraw.entering_amount)
+    await callback.message.edit_text(
+        f"{e(EMOJI_WITHDRAWAL,'📤')} <b>Вывод реферального баланса</b>\n\n"
+        f"<blockquote><i><tg-emoji emoji-id=\"5197269100878907942\">🎰</tg-emoji>Введите сумму для вывода:</i></blockquote>",
+        parse_mode=ParseMode.HTML,
+        reply_markup=kb_ref_cancel()
+    )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
+    await callback.answer()
+
+
+# ── Вызывается напрямую из main.py (handle_text_message) ──
+async def ref_withdraw_amount(message: Message, state: FSMContext):
     try:
-        amount      = float(parts[2])
-        activations = int(parts[3])
+        amount = float(message.text.replace(",", ".").strip())
     except ValueError:
         await message.answer(
-            "❌ <b>Неверный формат.</b>\n"
-            "<blockquote>Сумма — число, активации — целое число.</blockquote>",
-            parse_mode=ParseMode.HTML
+            "❌ <b>Неверный формат.</b> Введите число, например: <code>5.00</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_ref_cancel()
         )
         return
 
-    if amount <= 0 or activations <= 0:
+    if amount < MIN_REF_WITHDRAWAL:
         await message.answer(
-            "❌ <b>Сумма и количество активаций должны быть больше 0.</b>",
-            parse_mode=ParseMode.HTML
+            f"❌ <b>Минимальная сумма:</b> <code>{MIN_REF_WITHDRAWAL:.2f}</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_ref_cancel()
         )
         return
 
-    ok = promo_create(code, amount, activations)
-    if not ok:
+    ref_balance = referral_storage.get_ref_balance(message.from_user.id)
+    if amount > ref_balance:
         await message.answer(
-            f"❌ <b>Промокод <code>{code}</code> уже существует.</b>",
-            parse_mode=ParseMode.HTML
+            f"❌ <b>Недостаточно средств.</b>\n"
+            f"Реф-баланс: <code>{ref_balance:.4f}</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_ref_cancel()
         )
         return
+
+    success = referral_storage.withdraw_ref_balance(message.from_user.id, amount)
+    if not success:
+        await message.answer(
+            "❌ Ошибка при выводе. Попробуйте позже.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=kb_ref_cancel()
+        )
+        return
+
+    # Сохраняем вывод реф-баланса в БД
+    asyncio.create_task(save_referral_withdrawal(message.from_user.id, amount))
+
+    # Зачисляем на основной игровой баланс
+    try:
+        from payments import storage as pay_storage
+        pay_storage.add_balance(message.from_user.id, amount)
+        new_pay_balance = pay_storage.get_balance(message.from_user.id)
+        try:
+            from main import betting_game
+            if betting_game:
+                betting_game.user_balances[message.from_user.id] = new_pay_balance
+                betting_game.save_balances()
+        except Exception:
+            pass
+    except Exception as ex:
+        logging.error(f"[Referral] Ошибка зачисления: {ex}")
+
+    await state.clear()
+    new_ref_balance = referral_storage.get_ref_balance(message.from_user.id)
 
     await message.answer(
-        f'✅ <b>Промокод создан!</b>\n\n'
-        f'<blockquote>'
-        f'<tg-emoji emoji-id="{EMOJI_PROMO}">📊</tg-emoji> Код: <code>{code}</code>\n'
-        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">💰</tg-emoji> Сумма: <b><code>{amount:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>\n'
-        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">🔥</tg-emoji> Активаций: <b><code>{activations}</code></b>'
-        f'</blockquote>',
-        parse_mode=ParseMode.HTML
-    )
-    logging.info(f"Админ {message.from_user.id} создал промокод {code} на {amount} ({activations} активаций)")
-
-
-# ========== ПРОМОКОДЫ: МЕНЮ ==========
-@router.callback_query(F.data == "promo_menu")
-async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await callback.message.edit_text(
-        f'<tg-emoji emoji-id="{EMOJI_PROMO}">💣</tg-emoji> <b>Промокоды</b>\n\n'
-        f'<blockquote>'
-        f'<tg-emoji emoji-id="5330320040883411678">💰</tg-emoji> Активируй промокод и получи бонус на баланс.\n\n'
-        f'<tg-emoji emoji-id="5199552030615558774">🔥</tg-emoji> Промокоды публикуются в нашем <a href="{LINK_CHAT}">чате</a> и <a href="{LINK_NEWS}">канале</a>.'
-        f'</blockquote>\n\n'
-        f'{links_line()}',
+        f"<tg-emoji emoji-id=\"5206607081334906820\">🎰</tg-emoji><b>Успешно выведено!</b>\n\n",
         parse_mode=ParseMode.HTML,
-        reply_markup=get_promo_menu(),
-        disable_web_page_preview=True
+        reply_markup=kb_ref_back()
     )
-    _set_msg_owner(callback.message.message_id, callback.from_user.id)
-    await callback.answer()
+    logging.info(f"[Referral] {message.from_user.id} вывел {amount} USDT с реф-баланса")
 
 
-# ========== ПРОМОКОДЫ: ВВОД ==========
-@router.callback_query(F.data == "promo_enter")
-async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.set_state(PromoState.entering_code)
-    await callback.message.edit_text(
-        f'<tg-emoji emoji-id="5197269100878907942">📊</tg-emoji> <b>Введите промокод</b>\n\n'
-        f'<blockquote><i>Напишите код в чат — регистр не важен.</i></blockquote>',
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_promo_cancel_menu()
-    )
-    _set_msg_owner(callback.message.message_id, callback.from_user.id)
-    await callback.answer()
+@referral_router.message(ReferralWithdraw.entering_amount, F.text)
+async def ref_withdraw_amount_handler(message: Message, state: FSMContext):
+    await ref_withdraw_amount(message, state)
 
 
-# ========== ПРОФИЛЬ ==========
-@router.callback_query(F.data == "profile")
-async def profile_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
-        return
-    await state.clear()
-    from datetime import datetime
-    user_data     = storage.get_user(callback.from_user.id)
-    join_date_str = user_data.get('join_date', datetime.now().strftime('%Y-%m-%d'))
-    join_date     = datetime.strptime(join_date_str, '%Y-%m-%d')
-    days_in_project = (datetime.now() - join_date).days
-
-    update_user_name(storage, callback.from_user.id, callback.from_user.first_name or "")
-
-    msg = await callback.message.edit_text(
-        get_profile_text(callback.from_user.first_name, days_in_project, callback.from_user.id),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_profile_menu(),
-        disable_web_page_preview=True
-    )
-    _set_msg_owner(callback.message.message_id, callback.from_user.id)
-    await callback.answer()
+# ──────────────────────────────────────────────
+#  ХЕЛПЕР: начисление комиссии — тихо, без уведомлений
+# ──────────────────────────────────────────────
+async def notify_referrer_commission(referral_user_id: int, bet_amount: float):
+    commission = referral_storage.accrue_commission(referral_user_id, bet_amount)
+    if commission > 0:
+        logging.info(f"[Referral] Комиссия {commission} USDT начислена тихо рефереру")
+        # Сохраняем комиссию в БД
+        referrer_id = referral_storage.get_referrer_id(referral_user_id)
+        if referrer_id:
+            asyncio.create_task(save_referral_commission(referrer_id, referral_user_id, commission))
 
 
-# ========== ИГРЫ ==========
-@router.callback_query(F.data == "games")
-async def games_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await callback.message.edit_text(
-        get_games_menu_text(callback.from_user.id),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_games_menu(),
-        disable_web_page_preview=True
-    )
-    _set_msg_owner(callback.message.message_id, callback.from_user.id)
-    await callback.answer()
-
-
-# ========== МИНЫ — ВХОД ==========
-@router.callback_query(F.data == "mines_menu")
-async def mines_menu_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_mines_menu(callback, storage, betting_game)
-
-
-# ========== БАШНЯ — ВХОД ==========
-@router.callback_query(F.data == "tower_menu")
-async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_tower_menu(callback, storage, betting_game)
-
-
-# ========== ОСТАЛЬНЫЕ ИГРЫ ==========
-@router.callback_query(F.data == GAME_CALLBACKS['dice'])
-async def dice_menu(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_dice_menu(callback)
-
-@router.callback_query(F.data == GAME_CALLBACKS['basketball'])
-async def basketball_menu(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_basketball_menu(callback)
-
-@router.callback_query(F.data == GAME_CALLBACKS['football'])
-async def football_menu(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_football_menu(callback)
-
-@router.callback_query(F.data == GAME_CALLBACKS['darts'])
-async def darts_menu(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_darts_menu(callback)
-
-@router.callback_query(F.data == GAME_CALLBACKS['bowling'])
-async def bowling_menu(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_bowling_menu(callback)
-
-@router.callback_query(F.data == "bet_dice_exact")
-async def exact_number_menu(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_exact_number_menu(callback)
-
-@router.callback_query(F.data.startswith("bet_"))
-async def handle_bet_selection(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await request_amount(callback, state, betting_game)
-
-@router.callback_query(F.data == "cancel_bet")
-async def handle_cancel_bet(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await cancel_bet(callback, state, betting_game)
-
-
-# ========== ПОПОЛНЕНИЕ (из профиля) ==========
-@router.callback_query(F.data == "deposit")
-async def deposit_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
-        return
-    await state.clear()
-    storage.set_pending(callback.from_user.id, 'deposit')
-    await callback.message.edit_text(
-        f'<b><tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Пополнение баланса</b>\n\n'
-        f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>',
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_cancel_menu()
-    )
-    await callback.answer()
-
-
-# ========== ВЫВОД (из профиля) ==========
-@router.callback_query(F.data == "withdraw")
-async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
-        return
-    await state.clear()
-    storage.set_pending(callback.from_user.id, 'withdraw')
-    await callback.message.edit_text(
-        f'<b><tg-emoji emoji-id="{EMOJI_WITHDRAWAL}">💸</tg-emoji> Вывод средств</b>\n\n'
-        f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму вывода:</i></blockquote>',
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_cancel_menu()
-    )
-    await callback.answer()
-
-
-# ========== КОМАНДА ПЕРЕВОДА ==========
-@router.message(F.text.regexp(r'(?i)^(?:/)?(?:pay|дать)\s+[\d.,]+$'))
-async def handle_transfer(message: Message, state: FSMContext):
-    # Проверяем, что это ответ на сообщение
-    if not message.reply_to_message:
-        await message.reply(
-            f'❌<b>Команда должна быть ответом на сообщение игрока!</b>\n\n'
-            f'<blockquote><i>Ответьте на сообщение нужного игрока и введите команду:\n'
-            f'<code>дать 100</code> или <code>/pay 100</code></i></blockquote>',
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    target = message.reply_to_message.from_user
-
-    # Нельзя переводить самому себе
-    if target.id == message.from_user.id:
-        await message.reply(
-            "<blockquote>❌<b>Нельзя переводить самому себе!</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Нельзя переводить ботам
-    if target.is_bot:
-        await message.reply(
-            "<blockquote>❌<b>Нельзя переводить ботам!</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Парсим сумму
-    match = TRANSFER_PATTERN.match(message.text.strip())
-    if not match:
-        return
-
+# ──────────────────────────────────────────────
+#  ХЕЛПЕР: обработка /start ref_XXXXXX
+# ──────────────────────────────────────────────
+async def process_start_referral(message: Message, start_param: str) -> bool:
+    if not start_param.startswith("ref_"):
+        return False
     try:
-        amount = float(match.group(1).replace(',', '.'))
+        referrer_id = int(start_param[4:])
     except ValueError:
-        await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML)
-        return
+        return False
 
-    # Проверка лимитов
-    if amount < MIN_TRANSFER:
-        await message.reply(
-            f"<blockquote>❌<b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji></b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
+    new_user_id = message.from_user.id
+    registered  = referral_storage.register_referral(new_user_id, referrer_id)
 
-    if amount > MAX_TRANSFER:
-        await message.reply(
-            f"<blockquote>❌<b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji></b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
+    if registered:
+        # Сохраняем связь реферал → реферер в БД
+        asyncio.create_task(db_register_referral(new_user_id, referrer_id))
 
-    # Проверка баланса отправителя
-    sender_balance = storage.get_balance(message.from_user.id)
-    if sender_balance < amount:
-        await message.reply(
-            f"<blockquote>❌<b>Недостаточно средств!</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Выполняем перевод атомарно — защита от двойной отправки
-    lock = _get_transfer_lock(message.from_user.id)
-    if lock.locked():
-        await message.reply(
-            "<blockquote>⏳<b>Перевод уже обрабатывается. Подождите.</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    async with lock:
-        # Повторная проверка баланса внутри локера
-        sender_balance_now = storage.get_balance(message.from_user.id)
-        if sender_balance_now < amount:
-            await message.reply(
-                "<blockquote>❌<b>Недостаточно средств!</b></blockquote>",
+    if registered and _bot is not None:
+        try:
+            await _bot.send_message(
+                chat_id=referrer_id,
+                text=(
+                    f"<blockquote><tg-emoji emoji-id=\"5222079954421818267\">🎰</tg-emoji><b>Новый реферал!</b></blockquote>\n\n"
+                ),
                 parse_mode=ParseMode.HTML
             )
-            return
-        storage.get_user(target.id)
-        storage.add_balance(message.from_user.id, -amount)
-        storage.add_balance(target.id, amount)
+        except Exception as ex:
+            logging.warning(f"[Referral] Не удалось уведомить {referrer_id}: {ex}")
 
-    target_name = target.first_name or "Игрок"
-
-    await message.reply(
-        f"<tg-emoji emoji-id='5206607081334906820'>💰</tg-emoji><b>Перевод выполнен!</b>\n\n"
-        f"<blockquote>"
-        f"<tg-emoji emoji-id='5195033767969839232'>💰</tg-emoji>Вы отправили <code>{amount:,.2f}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji> игроку <b>{target_name}</b>"
-        f"</blockquote>",
-        parse_mode=ParseMode.HTML
-    )
-
-    logging.info(
-        f"Перевод: {message.from_user.id} → {target.id} | сумма: {amount}"
-    )
-
-
-# ========== ТЕКСТОВЫЕ СООБЩЕНИЯ ==========
-
-@router.message(F.text.regexp(r'(?i)^(?:/)?(?:mines|мины)\s+[\d.,]+\s+\d+$'))
-async def mines_command_handler(message: Message, state: FSMContext):
-    await process_mines_command(message, state, storage)
-
-
-@router.message(F.text.regexp(r'(?i)^(?:/)?(?:tower|башня)\s+[\d.,]+\s+\d+$'))
-async def tower_command_handler(message: Message, state: FSMContext):
-    await process_tower_command(message, state, storage)
-
-
-@router.message(F.text)
-async def handle_text_message(message: Message, state: FSMContext):
-    from payments import handle_amount_input
-
-    if is_balance_command(message.text):
-        balance = sync_balances(message.from_user.id)
-        await message.reply(
-            f'<blockquote><b><tg-emoji emoji-id="5278467510604160626">💰</tg-emoji> '
-            f'<code>{balance:,.2f}</code> '
-            f'<tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>\n\n'
-            f'<blockquote><i>Выберите действие ниже <tg-emoji emoji-id="5201691993775818138">💰</tg-emoji></i></blockquote>',
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_balance_menu()
-        )
-        return
-
-    current_state = await state.get_state()
-
-    if current_state == PromoState.entering_code.state:
-        code = message.text.strip()
-        ok, amount, reason = promo_use(code, message.from_user.id)
-
-        if ok:
-            storage.get_user(message.from_user.id)
-            storage.add_balance(message.from_user.id, amount)
-            new_balance = storage.get_balance(message.from_user.id)
-            await state.clear()
-            await message.answer(
-                f'✅ <b>Промокод активирован!</b>\n\n'
-                f'<blockquote>'
-                f'<tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Начислено: <b><code>+{amount:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>\n'
-                f'<tg-emoji emoji-id="5278467510604160626">💰</tg-emoji> Баланс: <b><code>{new_balance:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>'
-                f'</blockquote>',
-                parse_mode=ParseMode.HTML,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text="На главную",
-                        callback_data="back_to_main",
-                        icon_custom_emoji_id=EMOJI_BACK
-                    )
-                ]])
-            )
-        else:
-            error_texts = {
-                "not_found":    "Промокод не найден. Проверьте правильность ввода.",
-                "already_used": "Вы уже активировали этот промокод.",
-                "expired":      "Промокод больше не активен — все активации израсходованы.",
-            }
-            err_msg = error_texts.get(reason, "Неизвестная ошибка.")
-            await message.answer(
-                f"❌ <b>Ошибка активации</b>\n\n"
-                f"<blockquote>{err_msg}</blockquote>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_promo_cancel_menu()
-            )
-        return
-
-    if current_state == ReferralWithdraw.entering_amount.state:
-        await ref_withdraw_amount(message, state)
-        return
-
-    if current_state == MinesGame.choosing_bet:
-        await process_mines_bet(message, state, storage)
-        return
-
-    if current_state == TowerGame.choosing_bet:
-        await process_tower_bet(message, state, storage)
-        return
-
-    if is_bet_command(message.text):
-        await handle_text_bet_command(message, betting_game)
-        return
-
-    try:
-        float(message.text)
-        if current_state:
-            from game import process_bet_amount
-            await process_bet_amount(message, state, betting_game)
-        else:
-            await handle_amount_input(message)
-    except ValueError:
-        pass
-
-
-# ========== ЛИДЕРЫ ==========
-@router.callback_query(F.data == "leaders")
-async def leaders_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_leaders(callback, storage)
-
-
-# ========== О ПРОЕКТЕ ==========
-@router.callback_query(F.data == "about")
-async def about_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await callback.message.edit_text(
-        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">ℹ️</tg-emoji> <b>О проекте</b>\n\n',
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Новости",    url=LINK_NEWS,     icon_custom_emoji_id=EMOJI_CHANNEL),
-                InlineKeyboardButton(text="Чат",        url=LINK_CHAT,     icon_custom_emoji_id=EMOJI_CHAT),
-                InlineKeyboardButton(text="Инструкция", url=LINK_INSTRUCT, icon_custom_emoji_id=EMOJI_INSTRUCT)
-            ],
-            [
-                InlineKeyboardButton(text="Поддержка", url=LINK_SUPPORT, icon_custom_emoji_id=EMOJI_SUPORT)
-            ],
-            [
-                InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
-            ]
-        ])
-    )
-    _set_msg_owner(callback.message.message_id, callback.from_user.id)
-    await callback.answer()
-
-
-# ========== НА ГЛАВНУЮ ==========
-@router.callback_query(F.data == "back_to_main")
-async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    storage.clear_pending(callback.from_user.id)
-    await callback.message.edit_text(
-        get_main_menu_text(),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_main_menu()
-    )
-    _set_msg_owner(callback.message.message_id, callback.from_user.id)
-    await callback.answer()
-
-
-# ========== ЗАПУСК (ПОЛЛИНГ) ==========
-async def main():
-    global betting_game
-
-    # Настройка логирования
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    # Инициализация бота и диспетчера
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher(storage=MemoryStorage())
-
-    # Получаем информацию о боте
-    bot_info = await bot.get_me()
-    os.environ["BOT_USERNAME"] = bot_info.username
-    logging.info(f"Бот запущен как @{bot_info.username}")
-
-    # Инициализация игрового модуля
-    betting_game = BettingGame(bot)
-
-    # Подключаем все роутеры
-    dp.include_router(router)
-    dp.include_router(mines_router)
-    dp.include_router(tower_router)
-    dp.include_router(referral_router)
-    dp.include_router(payment_router)
-    dp.include_router(leaders_router)
-
-    # Настройка модулей
-    setup_payments(bot)
-    setup_referrals(bot)
-    _inject_leaders_owner_fns()   # ← единый _msg_owners для всех модулей
-
-    # Удаляем вебхук (на всякий случай) и запускаем поллинг
-    await bot.delete_webhook(drop_pending_updates=True)
-    
-    logging.info("Бот запущен в режиме поллинга")
-    
-    # Запускаем поллинг
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return registered
