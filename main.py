@@ -40,7 +40,7 @@ from referrals import (
 )
 
 # Импортируем модуль лидеров
-from leaders import leaders_router, show_leaders, update_user_name
+from leaders import leaders_router, show_leaders, update_user_name, init_leaders_db
 import leaders as _leaders_module
 import mines as _mines_module
 import tower as _tower_module
@@ -998,6 +998,7 @@ async def main():
     # Инициализация базы данных
     await init_db()
     await import_users_from_json()
+    init_leaders_db()  # создаёт таблицу leaders_stats и загружает оборот/выигрыши из БД
     logging.info("База данных инициализирована")
 
     # Инициализация бота и диспетчера
