@@ -82,6 +82,12 @@ mines_router = Router()
 _sessions: dict      = {}   # user_id -> session dict
 _timeout_tasks: dict = {}   # user_id -> asyncio.Task
 
+# Функции владельца — инжектируются из main.py при старте
+def _noop_set_owner(message_id: int, user_id: int): pass
+def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
+set_owner_fn = _noop_set_owner
+is_owner_fn  = _noop_is_owner
+
 # ========== ЗАЩИТА ОТ ДУБЛЕЙ ==========
 # Локи на пользователя — предотвращают race condition при одновременных нажатиях
 _user_locks: dict = {}          # user_id -> asyncio.Lock
@@ -392,6 +398,7 @@ async def show_mines_menu(callback: CallbackQuery, storage, betting_game):
         parse_mode=ParseMode.HTML,
         reply_markup=build_mines_select_keyboard()
     )
+    set_owner_fn(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
@@ -400,6 +407,10 @@ async def show_mines_menu(callback: CallbackQuery, storage, betting_game):
 @mines_router.callback_query(F.data.startswith("mines_select_"))
 async def mines_select_handler(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
+
+    if not is_owner_fn(callback.message.message_id, user_id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
 
     if _has_active_game(user_id):
         await callback.answer(
@@ -424,11 +435,15 @@ async def mines_select_handler(callback: CallbackQuery, state: FSMContext):
             )
         ]])
     )
+    set_owner_fn(callback.message.message_id, user_id)
     await callback.answer()
 
 
 @mines_router.callback_query(F.data == "mines_back_select")
 async def mines_back_select(callback: CallbackQuery, state: FSMContext):
+    if not is_owner_fn(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
     from payments import storage as pay_storage
     await state.clear()
     await show_mines_menu(callback, pay_storage, None)
@@ -437,6 +452,10 @@ async def mines_back_select(callback: CallbackQuery, state: FSMContext):
 @mines_router.callback_query(F.data == "mines_manual")
 async def mines_manual_handler(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
+
+    if not is_owner_fn(callback.message.message_id, user_id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
 
     if _has_active_game(user_id):
         await callback.answer(
@@ -459,6 +478,7 @@ async def mines_manual_handler(callback: CallbackQuery, state: FSMContext):
             )
         ]])
     )
+    set_owner_fn(callback.message.message_id, user_id)
     await callback.answer()
 
 
@@ -643,6 +663,7 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
                 parse_mode=ParseMode.HTML,
                 reply_markup=build_game_keyboard(session, game_over=True)
             )
+            set_owner_fn(callback.message.message_id, user_id)
             await callback.answer("💥Мина!")
 
         else:
@@ -689,6 +710,7 @@ async def mines_cell_handler(callback: CallbackQuery, state: FSMContext):
                     parse_mode=ParseMode.HTML,
                     reply_markup=build_game_keyboard(session, game_over=True)
                 )
+                set_owner_fn(callback.message.message_id, user_id)
                 await callback.answer("🏆 Победа!")
             else:
                 await callback.message.edit_text(
@@ -775,6 +797,7 @@ async def mines_cashout(callback: CallbackQuery, state: FSMContext):
             )],
         ])
     )
+    set_owner_fn(callback.message.message_id, user_id)
     await callback.answer(f"💰+{winnings}!")
 
 
