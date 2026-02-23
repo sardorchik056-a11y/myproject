@@ -54,6 +54,9 @@ PERIOD_LABELS = {
 # _stats[user_id][date_str] = {"turnover": float, "wins": float, "name": str}
 _stats: dict = {}
 
+# Кто открыл лидерборд: message_id -> user_id
+_message_owners: dict = {}
+
 
 def _today_str() -> str:
     from datetime import datetime, timezone
@@ -221,7 +224,9 @@ def build_leaders_text(storage, leader_type: str, period: str) -> str:
 async def show_leaders(callback: CallbackQuery, storage_obj):
     text = build_leaders_text(storage_obj, "turnover", "today")
     kb   = get_leaders_keyboard("turnover", "today")
-    await callback.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    msg = await callback.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
+    # Запоминаем кто открыл это меню
+    _message_owners[callback.message.message_id] = callback.from_user.id
     await callback.answer()
 
 
@@ -237,6 +242,13 @@ async def leaders_switch(callback: CallbackQuery):
 
     if leader_type not in LEADER_TYPES or period not in LEADER_PERIODS:
         await callback.answer("Неверные параметры", show_alert=True)
+        return
+
+    # Проверка владельца: только тот кто открыл это меню может переключать
+    msg_id = callback.message.message_id
+    owner  = _message_owners.get(msg_id)
+    if owner is not None and callback.from_user.id != owner:
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
         return
 
     try:
