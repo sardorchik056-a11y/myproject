@@ -48,6 +48,10 @@ EMOJI_LINK    = "5271604874419647061"
 payment_router = Router()
 bot: Bot = None
 
+# Функции владельца сообщений — инжектируются из main.py
+set_owner_fn = None
+is_owner_fn  = None
+
 
 # ========== ХРАНИЛИЩЕ ==========
 class Storage:
@@ -562,6 +566,8 @@ async def _process_deposit(message: Message, user_id: int, amount_override: floa
         )
 
         storage.set_message_info(invoice_id, message.chat.id, sent_msg.message_id)
+        if set_owner_fn:
+            set_owner_fn(sent_msg.message_id, user_id)
         asyncio.create_task(update_user_info(
             user_id,
             first_name=message.from_user.first_name or '',
