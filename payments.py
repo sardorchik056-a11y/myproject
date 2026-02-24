@@ -635,21 +635,28 @@ async def _process_withdraw(message: Message, user_id: int):
                 )
                 return
 
-            check = await crypto_api.create_check(amount, user_id)
-            if not check or 'bot_check_url' not in check:
+            # ── Сначала резервируем (списываем) баланс, потом создаём чек ──────
+            # Если создать чек ДО списания — при await event loop переключится
+            # и баланс может измениться (игра), тогда record_withdrawal вернёт False,
+            # но чек уже уйдёт пользователю → бесплатные деньги.
+            withdrawn = storage.record_withdrawal(user_id, amount)
+            if not withdrawn:
+                logging.error(f"[WITHDRAW] record_withdrawal вернул False: user_id={user_id}, amount={amount}")
                 await message.answer(
-                    '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
+                    '<blockquote>❌ Ошибка списания средств. Попробуйте позже.</blockquote>',
                     parse_mode=ParseMode.HTML,
                     reply_markup=kb_back_profile()
                 )
                 return
 
-            withdrawn = storage.record_withdrawal(user_id, amount)
-
-        if not withdrawn:
-            logging.error(f"[WITHDRAW] record_withdrawal вернул False: user_id={user_id}, amount={amount}")
+        # Создаём чек уже после списания (вне лока — await безопасен)
+        check = await crypto_api.create_check(amount, user_id)
+        if not check or 'bot_check_url' not in check:
+            # Чек не создан — возвращаем деньги обратно
+            storage.add_balance(user_id, amount)
+            logging.error(f"[WITHDRAW] Чек не создан, баланс возвращён: user_id={user_id}, amount={amount}")
             await message.answer(
-                '<blockquote>❌ Ошибка списания средств. Попробуйте позже.</blockquote>',
+                '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb_back_profile()
             )
