@@ -90,8 +90,8 @@ BASKETBALL_BET_TYPES = {
 }
 
 FOOTBALL_BET_TYPES = {
-    'футбол_гол': {'name': '⚽ Гол', 'values': [4, 5], 'multiplier': 1.35},
-    'футбол_мимо': {'name': '⚽ Мимо', 'values': [1, 2, 3], 'multiplier': 1.75},
+    'футбол_гол': {'name': '⚽ Гол', 'values': [3, 4, 5], 'multiplier': 1.35},
+    'футбол_мимо': {'name': '⚽ Мимо', 'values': [1, 2], 'multiplier': 1.75},
 }
 
 DART_BET_TYPES = {
@@ -914,8 +914,9 @@ async def play_double_dice_game(chat_id: int, user_id: int, nickname: str, amoun
             parse_mode='HTML'
         )
 
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ БОУЛИНГА (только эта функция изменена)
 async def play_bowling_vs_game(chat_id: int, user_id: int, nickname: str, amount: float, bet_type: str, bet_config: dict, betting_game: BettingGame, reply_to_message: Message = None):
-    """Игра в боулинг против бота"""
+    """Игра в боулинг против бота с перебросами до победы"""
     # Отправляем первый бросок в ответ на сообщение пользователя если оно есть
     if reply_to_message:
         player_roll = await betting_game.bot.send_dice(
@@ -934,8 +935,8 @@ async def play_bowling_vs_game(chat_id: int, user_id: int, nickname: str, amount
     player_value = player_roll.dice.value
     bot_value = bot_roll.dice.value
     
-    # При ничьей - переброс
-    if player_value == bot_value:
+    # При ничьей - перебрасываем пока не будет победителя
+    while player_value == bot_value:
         await player_roll.reply("<tg-emoji emoji-id=\"5402186569006210455\">🎉</tg-emoji>Ничья! Переброс...")
         await asyncio.sleep(1)
         
