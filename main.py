@@ -113,6 +113,12 @@ TRANSFER_PATTERN = re.compile(r'^(?:/)?(?:pay|дать)\s+([\d.,]+)$', re.IGNORE
 # Паттерн команды игр — с/без слеша, без лишнего текста после
 GAMES_PATTERN = re.compile(r'^/?(?:игры|games)$', re.IGNORECASE)
 
+# Паттерн команды пополнения — деп 10 | /деп 1.5 | dep 5 | deposit 2 и т.д.
+DEP_PATTERN = re.compile(
+    r'^/?(?:деп|пополнить|депозит|dep|deposit)\s+(\d+(?:\.\d+)?)$',
+    re.IGNORECASE
+)
+
 # Локеры для переводов — защита от двойной отправки
 _transfer_locks: dict = {}  # user_id -> asyncio.Lock
 
@@ -862,6 +868,24 @@ async def handle_games_command(message: Message, state: FSMContext):
         disable_web_page_preview=True
     )
     _set_msg_owner(sent.message_id, message.from_user.id)
+
+
+# ========== КОМАНДА ПОПОЛНЕНИЯ ==========
+# Работает только при точном вводе: деп 10 | /деп 1.5 | dep 5 | deposit 2.5 и т.д.
+# Лишний текст после числа → не срабатывает
+@router.message(F.text.regexp(DEP_PATTERN))
+async def handle_dep_command_main(message: Message, state: FSMContext):
+    from payments import _process_deposit
+    m = DEP_PATTERN.match(message.text.strip())
+    if not m:
+        return
+    try:
+        amount = float(m.group(1))
+    except ValueError:
+        return
+    await state.clear()
+    storage.clear_pending(message.from_user.id)
+    await _process_deposit(message, message.from_user.id, amount_override=amount)
 
 
 @router.message(F.text)
