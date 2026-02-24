@@ -45,6 +45,7 @@ import leaders as _leaders_module
 import mines as _mines_module
 import tower as _tower_module
 import referrals as _referrals_module
+import payments as _payments_module
 
 # Импортируем базу данных
 try:
@@ -157,6 +158,8 @@ def _inject_leaders_owner_fns():
     _tower_module.is_owner_fn      = _is_msg_owner
     _referrals_module.set_owner_fn = _set_msg_owner
     _referrals_module.is_owner_fn  = _is_msg_owner
+    _payments_module.set_owner_fn  = _set_msg_owner
+    _payments_module.is_owner_fn   = _is_msg_owner
 
 
 # ========== FSM ==========
