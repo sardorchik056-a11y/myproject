@@ -3,6 +3,7 @@ import uuid
 import asyncio
 import hashlib
 import time
+import re as _re
 from datetime import datetime, timedelta
 from typing import Optional, Dict
 
@@ -179,7 +180,6 @@ class Storage:
         """Просто пополняет баланс. НЕ считается депозитом."""
         user = self.get_user(user_id)
         user['balance'] = round(user['balance'] + float(amount), 8)
-        # Сохраняем в БД
         self._save_balance_to_db(user_id)
 
     def deduct_balance(self, user_id: int, amount: float) -> bool:
@@ -187,7 +187,6 @@ class Storage:
         user = self.get_user(user_id)
         if user['balance'] >= float(amount):
             user['balance'] = round(user['balance'] - float(amount), 8)
-            # Сохраняем в БД
             self._save_balance_to_db(user_id)
             return True
         return False
@@ -208,7 +207,6 @@ class Storage:
         user = self.get_user(user_id)
         user['balance'] = round(user['balance'] + float(amount), 8)
         user['total_deposits'] = round(user.get('total_deposits', 0.0) + float(amount), 8)
-        # Сохраняем в БД
         self._save_balance_to_db(user_id)
         try:
             db_update_field(user_id, "total_deposits", user['total_deposits'])
@@ -222,7 +220,6 @@ class Storage:
         if user['balance'] >= float(amount):
             user['balance'] = round(user['balance'] - float(amount), 8)
             user['total_withdrawals'] = round(user.get('total_withdrawals', 0.0) + float(amount), 8)
-            # Сохраняем в БД
             self._save_balance_to_db(user_id)
             try:
                 db_update_field(user_id, "total_withdrawals", user['total_withdrawals'])
@@ -243,7 +240,6 @@ class Storage:
 
     def set_last_withdrawal(self, user_id: int):
         self.get_user(user_id)['last_withdrawal'] = datetime.now()
-        # Сохраняем дату в БД
         try:
             db_update_field(user_id, "last_withdrawal", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
         except Exception as e:
@@ -469,7 +465,29 @@ async def check_payment_task(invoice_id: str):
             del storage.check_tasks[invoice_id]
 
 
-# ========== ХЕНДЛЕР ВВОДА СУММЫ ==========
+# ========== ХЕНДЛЕР КОМАНДЫ ДЕП / DEP / DEPOSIT ==========
+# Формат: [/]деп 1.5 | dep 1.5 | deposit 2 | пополнить 3 | депозит 5
+# Лишний текст после числа → НЕ срабатывает (деп 10 хотел — игнор)
+_DEP_RE = _re.compile(
+    r'^/?(?:деп|пополнить|депозит|dep|deposit)\s+(\d+(?:\.\d+)?)$',
+    _re.IGNORECASE
+)
+
+@payment_router.message(F.text.regexp(_DEP_RE))
+async def handle_dep_command(message: Message):
+    m = _DEP_RE.match(message.text.strip())
+    if not m:
+        return
+    try:
+        amount = float(m.group(1))
+    except ValueError:
+        return
+    user_id = message.from_user.id
+    storage.clear_pending(user_id)
+    await _process_deposit(message, user_id, amount_override=amount)
+
+
+# ========== ХЕНДЛЕР ВВОДА СУММЫ (через pending) ==========
 @payment_router.message(F.text.regexp(r'^\d+\.?\d*$'))
 async def handle_amount_input(message: Message):
     user_id = message.from_user.id
@@ -484,9 +502,9 @@ async def handle_amount_input(message: Message):
 
 
 # ========== ПОПОЛНЕНИЕ ==========
-async def _process_deposit(message: Message, user_id: int):
+async def _process_deposit(message: Message, user_id: int, amount_override: float = None):
     try:
-        amount = float(message.text)
+        amount = amount_override if amount_override is not None else float(message.text)
 
         if amount < MIN_DEPOSIT:
             await message.answer(
