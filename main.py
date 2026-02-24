@@ -110,6 +110,9 @@ MAX_TRANSFER = 10000
 # Паттерн для команды перевода (строго в начале строки, без лишнего текста)
 TRANSFER_PATTERN = re.compile(r'^(?:/)?(?:pay|дать)\s+([\d.,]+)$', re.IGNORECASE)
 
+# Паттерн команды игр — с/без слеша, без лишнего текста после
+GAMES_PATTERN = re.compile(r'^/?(?:игры|games)$', re.IGNORECASE)
+
 # Локеры для переводов — защита от двойной отправки
 _transfer_locks: dict = {}  # user_id -> asyncio.Lock
 
@@ -846,6 +849,21 @@ async def tower_command_handler(message: Message, state: FSMContext):
     await process_tower_command(message, state, storage)
 
 
+# ========== КОМАНДА МЕНЮ ИГР ==========
+# Работает только при точном вводе: игры | /игры | games | /games
+# Лишний текст после → не срабатывает
+@router.message(F.text.regexp(GAMES_PATTERN))
+async def handle_games_command(message: Message, state: FSMContext):
+    await state.clear()
+    sent = await message.answer(
+        get_games_menu_text(message.from_user.id),
+        parse_mode=ParseMode.HTML,
+        reply_markup=get_games_menu(),
+        disable_web_page_preview=True
+    )
+    _set_msg_owner(sent.message_id, message.from_user.id)
+
+
 @router.message(F.text)
 async def handle_text_message(message: Message, state: FSMContext):
     from payments import handle_amount_input
@@ -1028,9 +1046,9 @@ async def main():
 
     # Удаляем вебхук (на всякий случай) и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
-    
+
     logging.info("Бот запущен в режиме поллинга")
-    
+
     # Запускаем поллинг
     await dp.start_polling(bot)
 
