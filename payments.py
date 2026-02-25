@@ -232,6 +232,27 @@ class Storage:
             return True
         return False
 
+    def rollback_withdrawal(self, user_id: int, amount: float):
+        """
+        Откатывает record_withdrawal — возвращает баланс И уменьшает total_withdrawals.
+        Вызывать только если чек Cryptobot не был создан после record_withdrawal.
+        """
+        user = self.get_user(user_id)
+        user['balance'] = round(user['balance'] + float(amount), 8)
+        user['total_withdrawals'] = max(
+            0.0,
+            round(user.get('total_withdrawals', 0.0) - float(amount), 8)
+        )
+        self._save_balance_to_db(user_id)
+        try:
+            db_update_field(user_id, "total_withdrawals", user['total_withdrawals'])
+        except Exception as e:
+            logging.error(f"[Storage] Ошибка отката total_withdrawals user={user_id}: {e}")
+        logging.info(
+            f"[ROLLBACK] Откат вывода user={user_id}, amount={amount}, "
+            f"новый баланс={user['balance']}, total_withdrawals={user['total_withdrawals']}"
+        )
+
     def can_withdraw(self, user_id: int) -> tuple:
         user = self.get_user(user_id)
         last = user.get('last_withdrawal')
@@ -652,9 +673,8 @@ async def _process_withdraw(message: Message, user_id: int):
         # Создаём чек уже после списания (вне лока — await безопасен)
         check = await crypto_api.create_check(amount, user_id)
         if not check or 'bot_check_url' not in check:
-            # Чек не создан — возвращаем деньги обратно
-            storage.add_balance(user_id, amount)
-            logging.error(f"[WITHDRAW] Чек не создан, баланс возвращён: user_id={user_id}, amount={amount}")
+            # Чек не создан — полностью откатываем: баланс + total_withdrawals
+            storage.rollback_withdrawal(user_id, amount)
             await message.answer(
                 '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
                 parse_mode=ParseMode.HTML,
@@ -664,6 +684,13 @@ async def _process_withdraw(message: Message, user_id: int):
 
         storage.set_last_withdrawal(user_id)
         asyncio.create_task(save_withdrawal(user_id, amount))
+
+        # Логируем ссылку на чек — если Telegram не доставит сообщение,
+        # пользователь найдёт чек в CryptoBot (pin_to_user_id), а мы видим лог
+        logging.info(
+            f"[WITHDRAW] Чек создан: user_id={user_id}, amount={amount}, "
+            f"check_url={check['bot_check_url']}"
+        )
 
         await message.answer(
             text=(
