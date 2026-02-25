@@ -50,8 +50,12 @@ PERIOD_LABELS = {
 
 DB_PATH = "casino.db"
 
-# ── Кэш в памяти (для быстрого доступа внутри сессии) ────────────────────────
-# _stats[user_id][date_str] = {"turnover": float, "wins": float, "name": str}
+# ── Кэш в памяти ─────────────────────────────────────────────────────────────
+# _stats[user_id][date_str] = {
+#   "turnover": float, "wins": float,
+#   "deposits": float, "withdrawals": float,
+#   "name": str
+# }
 _stats: dict = {}
 
 def _noop_set_owner(message_id: int, user_id: int): pass
@@ -77,14 +81,22 @@ def init_leaders_db():
         with _db_connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS leaders_stats (
-                    user_id  INTEGER NOT NULL,
-                    date     TEXT    NOT NULL,
-                    name     TEXT    DEFAULT '',
-                    turnover REAL    DEFAULT 0.0,
-                    wins     REAL    DEFAULT 0.0,
+                    user_id     INTEGER NOT NULL,
+                    date        TEXT    NOT NULL,
+                    name        TEXT    DEFAULT '',
+                    turnover    REAL    DEFAULT 0.0,
+                    wins        REAL    DEFAULT 0.0,
+                    deposits    REAL    DEFAULT 0.0,
+                    withdrawals REAL    DEFAULT 0.0,
                     PRIMARY KEY (user_id, date)
                 )
             """)
+            # Добавляем колонки если таблица уже существовала без них
+            for col in ("deposits", "withdrawals"):
+                try:
+                    conn.execute(f"ALTER TABLE leaders_stats ADD COLUMN {col} REAL DEFAULT 0.0")
+                except Exception:
+                    pass  # колонка уже есть
             conn.commit()
         logging.info("[Leaders] Таблица leaders_stats готова.")
         _load_stats_from_db()
@@ -98,7 +110,10 @@ def _load_stats_from_db():
     try:
         with _db_connect() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT user_id, date, name, turnover, wins FROM leaders_stats")
+            cur.execute(
+                "SELECT user_id, date, name, turnover, wins, deposits, withdrawals "
+                "FROM leaders_stats"
+            )
             rows = cur.fetchall()
         _stats = {}
         for row in rows:
@@ -107,9 +122,11 @@ def _load_stats_from_db():
             if uid not in _stats:
                 _stats[uid] = {}
             _stats[uid][date] = {
-                "turnover": float(row["turnover"]),
-                "wins":     float(row["wins"]),
-                "name":     row["name"] or f"User {uid}",
+                "turnover":    float(row["turnover"]    or 0.0),
+                "wins":        float(row["wins"]        or 0.0),
+                "deposits":    float(row["deposits"]    or 0.0),
+                "withdrawals": float(row["withdrawals"] or 0.0),
+                "name":        row["name"] or f"User {uid}",
             }
         logging.info(f"[Leaders] Загружено записей из БД: {len(rows)}")
     except Exception as e:
@@ -124,16 +141,39 @@ def _save_stat_to_db(user_id: int, date: str):
             return
         with _db_connect() as conn:
             conn.execute("""
-                INSERT INTO leaders_stats (user_id, date, name, turnover, wins)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO leaders_stats (user_id, date, name, turnover, wins, deposits, withdrawals)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(user_id, date) DO UPDATE SET
-                    name     = excluded.name,
-                    turnover = excluded.turnover,
-                    wins     = excluded.wins
-            """, (user_id, date, day["name"], day["turnover"], day["wins"]))
+                    name        = excluded.name,
+                    turnover    = excluded.turnover,
+                    wins        = excluded.wins,
+                    deposits    = excluded.deposits,
+                    withdrawals = excluded.withdrawals
+            """, (
+                user_id, date,
+                day["name"],
+                day["turnover"],
+                day["wins"],
+                day["deposits"],
+                day["withdrawals"],
+            ))
             conn.commit()
     except Exception as e:
         logging.error(f"[Leaders] Ошибка сохранения stat в БД: {e}")
+
+
+def _ensure_day(user_id: int, date: str, name: str = ""):
+    """Гарантирует наличие записи для (user_id, date) в _stats."""
+    if user_id not in _stats:
+        _stats[user_id] = {}
+    if date not in _stats[user_id]:
+        _stats[user_id][date] = {
+            "turnover": 0.0, "wins": 0.0,
+            "deposits": 0.0, "withdrawals": 0.0,
+            "name": name or f"User {user_id}",
+        }
+    if name:
+        _stats[user_id][date]["name"] = name
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -166,21 +206,53 @@ def _dates_for_period(period: str) -> list:
 def record_game_result(user_id: int, name: str, bet: float, win: float):
     """
     Вызывается из mines.py / tower.py / game.py после каждой завершённой ставки.
-    bet  — размер ставки (оборот)
-    win  — сумма выплаты (0 при проигрыше; сумма при выигрыше)
+    bet — размер ставки (оборот), win — сумма выплаты (0 при проигрыше).
     """
     date = _today_str()
-    if user_id not in _stats:
-        _stats[user_id] = {}
-    if date not in _stats[user_id]:
-        _stats[user_id][date] = {"turnover": 0.0, "wins": 0.0, "name": name}
-
+    _ensure_day(user_id, date, name)
     _stats[user_id][date]["turnover"] += bet
     _stats[user_id][date]["wins"]     += win
     _stats[user_id][date]["name"]      = name
-
-    # Сохраняем в БД сразу после каждой игры
     _save_stat_to_db(user_id, date)
+
+
+def record_deposit_stat(user_id: int, name: str, amount: float):
+    """
+    Вызывается из payment.py после подтверждения депозита от Cryptobot.
+    Записывает сумму депозита за сегодня — используется в лидерах (период).
+    """
+    date = _today_str()
+    _ensure_day(user_id, date, name)
+    _stats[user_id][date]["deposits"] += amount
+    _stats[user_id][date]["name"]      = name
+    _save_stat_to_db(user_id, date)
+    logging.info(f"[Leaders] Депозит записан: user_id={user_id}, amount={amount}, date={date}")
+
+
+def record_withdrawal_stat(user_id: int, name: str, amount: float):
+    """
+    Вызывается из payment.py после успешного вывода (чек создан и отправлен).
+    Записывает сумму вывода за сегодня — используется в лидерах (период).
+    """
+    date = _today_str()
+    _ensure_day(user_id, date, name)
+    _stats[user_id][date]["withdrawals"] += amount
+    _stats[user_id][date]["name"]         = name
+    _save_stat_to_db(user_id, date)
+    logging.info(f"[Leaders] Вывод записан: user_id={user_id}, amount={amount}, date={date}")
+
+
+def rollback_withdrawal_stat(user_id: int, amount: float):
+    """
+    Откатывает record_withdrawal_stat — вызывается если чек не был создан.
+    """
+    date = _today_str()
+    day  = _stats.get(user_id, {}).get(date)
+    if day is None:
+        return
+    day["withdrawals"] = max(0.0, round(day["withdrawals"] - amount, 8))
+    _save_stat_to_db(user_id, date)
+    logging.info(f"[Leaders] Откат вывода в стате: user_id={user_id}, amount={amount}")
 
 
 def update_user_name(storage, user_id: int, first_name: str):
@@ -193,42 +265,22 @@ def update_user_name(storage, user_id: int, first_name: str):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Топ-10
+#  Топ-10 — теперь ВСЕ типы фильтруются по периоду через _stats
 # ══════════════════════════════════════════════════════════════════
 
 def get_top10(storage, leader_type: str, period: str) -> list:
-    dates = _dates_for_period(period)
+    dates   = _dates_for_period(period)
     results = {}
 
-    if leader_type in ("turnover", "wins"):
-        for uid, day_data in _stats.items():
-            total = 0.0
-            name  = f"User {uid}"
-            for d in dates:
-                if d in day_data:
-                    total += day_data[d].get(leader_type, 0.0)
-                    name   = day_data[d].get("name", name)
-            if total > 0:
-                results[uid] = {"user_id": uid, "name": name, "value": total}
-
-    elif leader_type in ("deposits", "withdrawals"):
-        try:
-            users_data = storage.users
-        except AttributeError:
-            users_data = {}
-
-        field = "total_deposits" if leader_type == "deposits" else "total_withdrawals"
-        for uid, data in users_data.items():
-            value = float(data.get(field, 0) or 0)
-            if value <= 0:
-                continue
-            name = (
-                data.get("first_name")
-                or data.get("username")
-                or _get_name_from_stats(uid)
-                or f"User {uid}"
-            )
-            results[uid] = {"user_id": uid, "name": str(name), "value": value}
+    for uid, day_data in _stats.items():
+        total = 0.0
+        name  = f"User {uid}"
+        for d in dates:
+            if d in day_data:
+                total += day_data[d].get(leader_type, 0.0)
+                name   = day_data[d].get("name", name)
+        if total > 0:
+            results[uid] = {"user_id": uid, "name": name, "value": total}
 
     sorted_list = sorted(results.values(), key=lambda x: x["value"], reverse=True)
     return sorted_list[:10]
