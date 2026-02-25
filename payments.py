@@ -456,6 +456,18 @@ async def check_payment_task(invoice_id: str):
                         invoice['amount'],
                         invoice['crypto_id']
                     ))
+                    # Записываем в лидеры по дням (чтобы фильтр по периоду работал)
+                    try:
+                        from leaders import record_deposit_stat
+                        user_data = storage.get_user(invoice['user_id'])
+                        user_name = (
+                            user_data.get('first_name')
+                            or user_data.get('username')
+                            or f"User {invoice['user_id']}"
+                        )
+                        record_deposit_stat(invoice['user_id'], user_name, invoice['amount'])
+                    except Exception as _le:
+                        logging.error(f"[Leaders] record_deposit_stat error: {_le}")
                 else:
                     logging.warning(
                         f"[{invoice_id}] ОПЛАЧЕН но зачисление отклонено (дюп) — "
@@ -673,8 +685,13 @@ async def _process_withdraw(message: Message, user_id: int):
         # Создаём чек уже после списания (вне лока — await безопасен)
         check = await crypto_api.create_check(amount, user_id)
         if not check or 'bot_check_url' not in check:
-            # Чек не создан — полностью откатываем: баланс + total_withdrawals
+            # Чек не создан — полностью откатываем: баланс + total_withdrawals + лидеры
             storage.rollback_withdrawal(user_id, amount)
+            try:
+                from leaders import rollback_withdrawal_stat
+                rollback_withdrawal_stat(user_id, amount)
+            except Exception as _le:
+                logging.error(f"[Leaders] rollback_withdrawal_stat error: {_le}")
             await message.answer(
                 '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
                 parse_mode=ParseMode.HTML,
@@ -684,6 +701,19 @@ async def _process_withdraw(message: Message, user_id: int):
 
         storage.set_last_withdrawal(user_id)
         asyncio.create_task(save_withdrawal(user_id, amount))
+
+        # Записываем в лидеры по дням (чтобы фильтр по периоду работал)
+        try:
+            from leaders import record_withdrawal_stat
+            user_data = storage.get_user(user_id)
+            user_name = (
+                user_data.get('first_name')
+                or user_data.get('username')
+                or f"User {user_id}"
+            )
+            record_withdrawal_stat(user_id, user_name, amount)
+        except Exception as _le:
+            logging.error(f"[Leaders] record_withdrawal_stat error: {_le}")
 
         # Логируем ссылку на чек — если Telegram не доставит сообщение,
         # пользователь найдёт чек в CryptoBot (pin_to_user_id), а мы видим лог
