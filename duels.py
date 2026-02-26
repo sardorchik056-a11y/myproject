@@ -258,7 +258,7 @@ def _start_activity_task(duel_id: str):
     _cancel_activity_task(duel)
     try:
         task = asyncio.create_task(_activity_timeout(duel_id))
-        task.add_done_callback(lambda t: print(f"[Duels] Таск {duel_id} завершён, исключение: {t.exception()}" if not t.cancelled() and t.exception() else f"[Duels] Таск {duel_id} завершён нормально/отменён", flush=True))
+        task.add_done_callback(lambda t: print(f"[Duels] Таск {duel_id} ОТМЕНЁН" if t.cancelled() else f"[Duels] Таск {duel_id} завершён, exc={t.exception()}", flush=True))
         duel['activity_task'] = task
         print(f"[Duels] Таймер запущен для {duel_id}", flush=True)
     except Exception as e:
@@ -286,8 +286,9 @@ async def _activity_timeout(duel_id: str):
             parse_mode=ParseMode.HTML,
             reply_markup=None
         )
+        print(f"[Duels] Карточка обновлена chat={duel['chat_id']} msg={duel['message_id']}", flush=True)
     except Exception as e:
-        logging.warning(f"[Duels] edit timeout {duel_id}: {e}")
+        print(f"[Duels] ОШИБКА edit_message_text chat={duel['chat_id']} msg={duel['message_id']}: {e}", flush=True)
 
     logging.info(f"[Duels] {duel_id} таймаут, ставки возвращены.")
 # ─── создание дуэли ───────────────────────────────────────────────────────────
