@@ -253,16 +253,20 @@ def _cancel_activity_task(duel: dict):
 def _start_activity_task(duel_id: str):
     duel = _duels.get(duel_id)
     if not duel:
-        print(f"[Duels] _start_activity_task: duel {duel_id} не найдена!", flush=True)
         return
     _cancel_activity_task(duel)
-    try:
-        task = asyncio.create_task(_activity_timeout(duel_id))
-        task.add_done_callback(lambda t: print(f"[Duels] Таск {duel_id} ОТМЕНЁН" if t.cancelled() else f"[Duels] Таск {duel_id} завершён, exc={t.exception()}", flush=True))
-        duel['activity_task'] = task
-        print(f"[Duels] Таймер запущен для {duel_id}", flush=True)
-    except Exception as e:
-        print(f"[Duels] ОШИБКА create_task {duel_id}: {e}", flush=True)
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(_activity_timeout(duel_id))
+    def _on_done(t):
+        if t.cancelled():
+            print(f"[Duels] Таск {duel_id} ОТМЕНЁН", flush=True)
+        elif t.exception():
+            print(f"[Duels] Таск {duel_id} УПАЛ: {t.exception()}", flush=True)
+        else:
+            print(f"[Duels] Таск {duel_id} завершён OK", flush=True)
+    task.add_done_callback(_on_done)
+    duel['activity_task'] = task
+    print(f"[Duels] Таймер запущен для {duel_id}", flush=True)
 
 
 async def _activity_timeout(duel_id: str):
