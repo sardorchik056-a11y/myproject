@@ -12,34 +12,23 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 
-# Импортируем модуль платежей
 from payments import payment_router, setup_payments, storage, MIN_DEPOSIT, MIN_WITHDRAWAL
-
-# Импортируем игровой модуль
 from game import (
     BettingGame, show_dice_menu, show_basketball_menu, show_football_menu,
     show_darts_menu, show_bowling_menu, show_exact_number_menu, request_amount,
     cancel_bet, is_bet_command, handle_text_bet_command
 )
-
-# Импортируем модуль Мины
 from mines import (
     mines_router, MinesGame, show_mines_menu, process_mines_bet, process_mines_command
 )
-
-# Импортируем модуль Башня
 from tower import (
     tower_router, TowerGame, show_tower_menu, process_tower_bet, process_tower_command
 )
-
-# Импортируем реферальный модуль
 from referrals import (
     referral_router, referral_storage,
     setup_referrals, process_start_referral,
     ReferralWithdraw, ref_withdraw_amount
 )
-
-# Импортируем модуль лидеров
 from leaders import leaders_router, show_leaders, update_user_name, init_leaders_db
 import leaders as _leaders_module
 import mines as _mines_module
@@ -47,7 +36,6 @@ import tower as _tower_module
 import referrals as _referrals_module
 import payments as _payments_module
 
-# Импортируем модуль дуэлей
 from duels import (
     duels_router, setup_duels,
     is_duel_command, handle_duel_command,
@@ -56,23 +44,19 @@ from duels import (
 )
 import duels as _duels_module
 
-# Импортируем базу данных
 try:
     from database import init_db, import_users_from_json
 except ImportError:
     async def init_db(): pass
     async def import_users_from_json(): pass
 
-# Настройки
 BOT_TOKEN = "8531951028:AAFWUlHwpWfRrD2MvT4BqtexO7nFsQwFpcA"
 
-# ========== ССЫЛКИ ==========
 LINK_NEWS     = "https://t.me/FesteryNews"
 LINK_CHAT     = "https://t.me/FesteryCasChat"
 LINK_INSTRUCT = "https://t.me/Festery_info"
 LINK_SUPPORT  = "https://t.me/Xyloth_1337"
 
-# ID кастомных эмодзи
 EMOJI_WELCOME    = "5199885118214255386"
 EMOJI_PROFILE    = "5906581476639513176"
 EMOJI_PARTNERS   = "5906986955911993888"
@@ -93,58 +77,39 @@ EMOJI_CHAT       = "5443038326535759644"
 EMOJI_SUPORT     = "5907025791006283345"
 EMOJI_PEREXOD    = "5906839307821259375"
 
-# Кастомные callback_data для игр
 GAME_CALLBACKS = {
-    'dice':        'custom_dice_001',
-    'basketball':  'custom_basketball_002',
-    'football':    'custom_football_003',
-    'darts':       'custom_darts_004',
-    'bowling':     'custom_bowling_005',
-    'exact_number':'custom_exact_006',
+    'dice':         'custom_dice_001',
+    'basketball':   'custom_basketball_002',
+    'football':     'custom_football_003',
+    'darts':        'custom_darts_004',
+    'bowling':      'custom_bowling_005',
+    'exact_number': 'custom_exact_006',
     'back_to_games':'custom_back_games_007'
 }
 
-# File ID для приветственного стикера
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAIGUWmRflo7gmuMF5MNUcs4LGpyA93yAAKaDAAC753ZS6lNRCGaKqt5OgQ"
 
-# ID администраторов
-ADMIN_IDS = [8118184388, 8115654734]
-
-# Путь к файлу промокодов
-PROMO_FILE = "promos.json"
-
-# Лимиты перевода
+ADMIN_IDS    = [8118184388, 8115654734]
+PROMO_FILE   = "promos.json"
 MIN_TRANSFER = 0.02
 MAX_TRANSFER = 10000
 
-# Паттерн для команды перевода (строго в начале строки, без лишнего текста)
 TRANSFER_PATTERN = re.compile(r'^(?:/)?(?:pay|дать)\s+([\d.,]+)$', re.IGNORECASE)
-
-# Паттерн команды игр — с/без слеша, без лишнего текста после
-GAMES_PATTERN = re.compile(r'^/?(?:игры|games)$', re.IGNORECASE)
-
-# Паттерн команды пополнения — деп 10 | /деп 1.5 | dep 5 | deposit 2 и т.д.
-DEP_PATTERN = re.compile(
+GAMES_PATTERN    = re.compile(r'^/?(?:игры|games)$', re.IGNORECASE)
+DEP_PATTERN      = re.compile(
     r'^/?(?:деп|пополнить|депозит|dep|deposit)\s+(\d+(?:\.\d+)?)$',
     re.IGNORECASE
 )
 
-# Локеры для переводов — защита от двойной отправки
-_transfer_locks: dict = {}  # user_id -> asyncio.Lock
+_transfer_locks: dict = {}
 
 def _get_transfer_lock(user_id: int) -> asyncio.Lock:
     if user_id not in _transfer_locks:
         _transfer_locks[user_id] = asyncio.Lock()
     return _transfer_locks[user_id]
 
-# Роутер
-router = Router()
-
-# Экземпляр игры
+router       = Router()
 betting_game = None
-
-# Словарь владельцев сообщений — защита от нажатия чужих кнопок
-# message_id -> user_id (кто вызвал это сообщение)
 _msg_owners: dict = {}
 
 def _set_msg_owner(message_id: int, user_id: int):
@@ -153,12 +118,10 @@ def _set_msg_owner(message_id: int, user_id: int):
 def _is_msg_owner(message_id: int, user_id: int) -> bool:
     owner = _msg_owners.get(message_id)
     if owner is None:
-        return True   # сообщение без записи — пускаем (старые сообщения)
+        return True
     return owner == user_id
 
-
 def _inject_leaders_owner_fns():
-    """Передаём во все дочерние модули ссылки на единый словарь владельцев."""
     _leaders_module.set_owner_fn   = _set_msg_owner
     _leaders_module.is_owner_fn    = _is_msg_owner
     _mines_module.set_owner_fn     = _set_msg_owner
@@ -178,7 +141,7 @@ class PromoState(StatesGroup):
     entering_code = State()
 
 
-# ========== ПРОМОКОДЫ: ХРАНИЛИЩЕ ==========
+# ========== ПРОМОКОДЫ ==========
 def load_promos() -> dict:
     if not os.path.exists(PROMO_FILE):
         return {}
@@ -188,11 +151,9 @@ def load_promos() -> dict:
     except Exception:
         return {}
 
-
 def save_promos(data: dict):
     with open(PROMO_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-
 
 def promo_create(code: str, amount: float, activations: int) -> bool:
     data = load_promos()
@@ -203,9 +164,7 @@ def promo_create(code: str, amount: float, activations: int) -> bool:
     save_promos(data)
     return True
 
-
 def promo_use(code: str, user_id: int):
-    """Возвращает (ok: bool, amount: float, reason: str)"""
     data = load_promos()
     code = code.upper().strip()
     if code not in data:
@@ -221,21 +180,15 @@ def promo_use(code: str, user_id: int):
     return True, promo["amount"], "ok"
 
 
-# ========== ПРОВЕРКА КОМАНДЫ БАЛАНСА ==========
 def is_balance_command(text: str) -> bool:
     if not text:
         return False
     t = text.lstrip('/')
-    commands = {'б', 'b', 'бал', 'bal', 'баланс', 'balance'}
-    return t.lower() in commands
+    return t.lower() in {'б', 'b', 'бал', 'bal', 'баланс', 'balance'}
 
-
-# ========== СИНХРОНИЗАЦИЯ БАЛАНСОВ ==========
 def sync_balances(user_id: int):
     return storage.get_balance(user_id)
 
-
-# ========== СТРОКА ССЫЛОК ==========
 def links_line() -> str:
     return (
         f'<tg-emoji emoji-id="{EMOJI_SUPORT}">💬</tg-emoji> <b>'
@@ -265,7 +218,6 @@ def get_main_menu():
         ]
     ])
 
-
 def get_games_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -288,7 +240,6 @@ def get_games_menu():
         ]
     ])
 
-
 def get_profile_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -300,57 +251,27 @@ def get_profile_menu():
         ]
     ])
 
-
 def get_cancel_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="Отмена", callback_data="profile", icon_custom_emoji_id=EMOJI_BACK)
     ]])
 
-
 def get_balance_menu():
     bot_username = os.getenv("BOT_USERNAME", "your_bot")
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="Пополнить",
-                url=f"https://t.me/{bot_username}?start=deposit",
-                icon_custom_emoji_id=EMOJI_WALLET
-            ),
-            InlineKeyboardButton(
-                text="Вывести",
-                url=f"https://t.me/{bot_username}?start=withdraw",
-                icon_custom_emoji_id=EMOJI_WITHDRAWAL
-            )
-        ]
-    ])
-
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Пополнить", url=f"https://t.me/{bot_username}?start=deposit", icon_custom_emoji_id=EMOJI_WALLET),
+        InlineKeyboardButton(text="Вывести",   url=f"https://t.me/{bot_username}?start=withdraw", icon_custom_emoji_id=EMOJI_WITHDRAWAL)
+    ]])
 
 def get_promo_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="Ввести промокод",
-                callback_data="promo_enter",
-                icon_custom_emoji_id=EMOJI_PROMO
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="Назад",
-                callback_data="back_to_main",
-                icon_custom_emoji_id=EMOJI_BACK
-            )
-        ]
+        [InlineKeyboardButton(text="Ввести промокод", callback_data="promo_enter", icon_custom_emoji_id=EMOJI_PROMO)],
+        [InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)]
     ])
-
 
 def get_promo_cancel_menu():
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(
-            text="Отмена",
-            callback_data="promo_menu",
-            icon_custom_emoji_id=EMOJI_BACK
-        )
+        InlineKeyboardButton(text="Отмена", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_BACK)
     ]])
 
 
@@ -364,7 +285,6 @@ def get_main_menu_text():
         f'{links_line()}\n'
     )
 
-
 def get_games_menu_text(user_id: int):
     balance = sync_balances(user_id)
     return (
@@ -374,10 +294,9 @@ def get_games_menu_text(user_id: int):
         f'{links_line()}\n'
     )
 
-
 def get_profile_text(user_first_name: str, days_in_project: int, user_id: int):
-    balance = sync_balances(user_id)
-    user_data = storage.get_user(user_id)
+    balance           = sync_balances(user_id)
+    user_data         = storage.get_user(user_id)
     total_deposits    = user_data.get('total_deposits', 0)
     total_withdrawals = user_data.get('total_withdrawals', 0)
 
@@ -406,7 +325,7 @@ def get_profile_text(user_first_name: str, days_in_project: int, user_id: int):
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     try:
-        args = message.text.split(maxsplit=1)
+        args  = message.text.split(maxsplit=1)
         param = args[1] if len(args) > 1 else ""
 
         if param == "deposit":
@@ -415,25 +334,20 @@ async def cmd_start(message: Message):
             await message.answer(
                 f'<b><tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Пополнение баланса</b>\n\n'
                 f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>',
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_cancel_menu()
+                parse_mode=ParseMode.HTML, reply_markup=get_cancel_menu()
             )
             return
-
         elif param == "withdraw":
             storage.get_user(message.from_user.id)
             storage.set_pending(message.from_user.id, 'withdraw')
             await message.answer(
                 f'<b><tg-emoji emoji-id="{EMOJI_WITHDRAWAL}">💸</tg-emoji> Вывод средств</b>\n\n'
                 f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму вывода:</i></blockquote>',
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_cancel_menu()
+                parse_mode=ParseMode.HTML, reply_markup=get_cancel_menu()
             )
             return
-
         elif param.startswith("ref_"):
             await process_start_referral(message, param)
-
         else:
             referral_storage.mark_organic(message.from_user.id)
 
@@ -442,120 +356,85 @@ async def cmd_start(message: Message):
         update_user_name(storage, message.from_user.id, message.from_user.first_name or "")
 
         await message.answer_sticker(sticker=WELCOME_STICKER_ID)
-        sent = await message.answer(
-            get_main_menu_text(),
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_main_menu()
-        )
+        sent = await message.answer(get_main_menu_text(), parse_mode=ParseMode.HTML, reply_markup=get_main_menu())
         _set_msg_owner(sent.message_id, message.from_user.id)
     except Exception as e:
         logging.error(f"Error in start: {e}")
         await message.answer("Произошла ошибка. Попробуйте позже.")
 
 
-# ========== АДМИН: /add ==========
+# ========== АДМИН ==========
 @router.message(F.text.startswith("/add") & ~F.text.startswith("/addpromo"))
 async def cmd_add_balance(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Нет доступа.")
         return
-
     parts = message.text.split()
     if len(parts) != 3:
         await message.answer(
-            "<b>⚙️ Использование:</b>\n"
-            "<code>/add [user_id] [сумма]</code>\n\n"
-            "<b>Пример:</b> <code>/add 123456789 100</code>",
+            "<b>⚙️ Использование:</b>\n<code>/add [user_id] [сумма]</code>",
             parse_mode=ParseMode.HTML
         )
         return
-
     try:
         target_id = int(parts[1])
         amount    = float(parts[2])
     except ValueError:
-        await message.answer("❌ Неверный формат. ID должен быть числом, сумма — числом.")
+        await message.answer("❌ Неверный формат.")
         return
-
     if amount <= 0:
         await message.answer("❌ Сумма должна быть больше 0.")
         return
-
     storage.get_user(target_id)
     storage.add_balance(target_id, amount)
     new_balance = storage.get_balance(target_id)
-
     await message.answer(
-        f"<b>✅ Баланс выдан</b>\n\n"
-        f"<blockquote>"
+        f"<b>✅ Баланс выдан</b>\n\n<blockquote>"
         f"👤 ID: <code>{target_id}</code>\n"
         f"➕ Выдано: <code>{amount:.2f}</code>\n"
-        f"💰 Новый баланс: <code>{new_balance:.2f}</code>"
-        f"</blockquote>",
+        f"💰 Новый баланс: <code>{new_balance:.2f}</code></blockquote>",
         parse_mode=ParseMode.HTML
     )
-    logging.info(f"Админ {message.from_user.id} выдал {amount} пользователю {target_id}. Новый баланс: {new_balance}")
+    logging.info(f"Админ {message.from_user.id} выдал {amount} пользователю {target_id}")
 
 
-# ========== АДМИН: /addpromo ==========
 @router.message(F.text.startswith("/addpromo"))
 async def cmd_add_promo(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ Нет доступа.")
         return
-
     parts = message.text.split()
     if len(parts) != 4:
         await message.answer(
-            f'<b><tg-emoji emoji-id="{EMOJI_ABOUT}">📊</tg-emoji> Создание промокода</b>\n\n'
-            f'<blockquote><b>Использование:</b>\n'
-            f'<code>/addpromo [код] [сумма] [активации]</code>\n\n'
-            f'<b>Пример:</b>\n'
-            f'<code>/addpromo SUMMER25 50 100</code></blockquote>',
+            f'<b>Использование:</b> <code>/addpromo [код] [сумма] [активации]</code>',
             parse_mode=ParseMode.HTML
         )
         return
-
     code = parts[1].upper().strip()
     try:
         amount      = float(parts[2])
         activations = int(parts[3])
     except ValueError:
-        await message.answer(
-            "❌ <b>Неверный формат.</b>\n"
-            "<blockquote>Сумма — число, активации — целое число.</blockquote>",
-            parse_mode=ParseMode.HTML
-        )
+        await message.answer("❌ Неверный формат.", parse_mode=ParseMode.HTML)
         return
-
     if amount <= 0 or activations <= 0:
-        await message.answer(
-            "❌ <b>Сумма и количество активаций должны быть больше 0.</b>",
-            parse_mode=ParseMode.HTML
-        )
+        await message.answer("❌ Сумма и кол-во активаций должны быть > 0.", parse_mode=ParseMode.HTML)
         return
-
     ok = promo_create(code, amount, activations)
     if not ok:
-        await message.answer(
-            f"❌ <b>Промокод <code>{code}</code> уже существует.</b>",
-            parse_mode=ParseMode.HTML
-        )
+        await message.answer(f"❌ Промокод <code>{code}</code> уже существует.", parse_mode=ParseMode.HTML)
         return
-
     await message.answer(
-        f'✅ <b>Промокод создан!</b>\n\n'
-        f'<blockquote>'
-        f'<tg-emoji emoji-id="{EMOJI_PROMO}">📊</tg-emoji> Код: <code>{code}</code>\n'
-        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">💰</tg-emoji> Сумма: <b><code>{amount:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>\n'
-        f'<tg-emoji emoji-id="{EMOJI_ABOUT}">🔥</tg-emoji> Активаций: <b><code>{activations}</code></b>'
-        f'</blockquote>',
+        f'✅ <b>Промокод создан!</b>\n\n<blockquote>'
+        f'Код: <code>{code}</code>\n'
+        f'Сумма: <b><code>{amount:.2f}</code>💰</b>\n'
+        f'Активаций: <b><code>{activations}</code></b></blockquote>',
         parse_mode=ParseMode.HTML
     )
     logging.info(f"Админ {message.from_user.id} создал промокод {code} на {amount} ({activations} активаций)")
 
 
-# ========== ПРОМОКОДЫ: МЕНЮ ==========
+# ========== CALLBACK: ПРОМОКОДЫ ==========
 @router.callback_query(F.data == "promo_menu")
 async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -565,19 +444,14 @@ async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f'<tg-emoji emoji-id="{EMOJI_PROMO}">💣</tg-emoji> <b>Промокоды</b>\n\n'
         f'<blockquote>'
-        f'<tg-emoji emoji-id="5330320040883411678">💰</tg-emoji> Активируй промокод и получи бонус на баланс.\n\n'
-        f'<tg-emoji emoji-id="5199552030615558774">🔥</tg-emoji> Промокоды публикуются в нашем <a href="{LINK_CHAT}">чате</a> и <a href="{LINK_NEWS}">канале</a>.'
-        f'</blockquote>\n\n'
-        f'{links_line()}',
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_promo_menu(),
-        disable_web_page_preview=True
+        f'Активируй промокод и получи бонус на баланс.\n\n'
+        f'Промокоды публикуются в нашем <a href="{LINK_CHAT}">чате</a> и <a href="{LINK_NEWS}">канале</a>.'
+        f'</blockquote>\n\n{links_line()}',
+        parse_mode=ParseMode.HTML, reply_markup=get_promo_menu(), disable_web_page_preview=True
     )
     _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
-
-# ========== ПРОМОКОДЫ: ВВОД ==========
 @router.callback_query(F.data == "promo_enter")
 async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -585,16 +459,14 @@ async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(PromoState.entering_code)
     await callback.message.edit_text(
-        f'<tg-emoji emoji-id="5197269100878907942">📊</tg-emoji> <b>Введите промокод</b>\n\n'
-        f'<blockquote><i>Напишите код в чат — регистр не важен.</i></blockquote>',
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_promo_cancel_menu()
+        f'<b>Введите промокод</b>\n\n<blockquote><i>Напишите код в чат — регистр не важен.</i></blockquote>',
+        parse_mode=ParseMode.HTML, reply_markup=get_promo_cancel_menu()
     )
     _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
-# ========== ПРОФИЛЬ ==========
+# ========== CALLBACK: ПРОФИЛЬ ==========
 @router.callback_query(F.data == "profile")
 async def profile_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -602,24 +474,20 @@ async def profile_callback(callback: CallbackQuery, state: FSMContext):
         return
     await state.clear()
     from datetime import datetime
-    user_data     = storage.get_user(callback.from_user.id)
-    join_date_str = user_data.get('join_date', datetime.now().strftime('%Y-%m-%d'))
-    join_date     = datetime.strptime(join_date_str, '%Y-%m-%d')
+    user_data       = storage.get_user(callback.from_user.id)
+    join_date_str   = user_data.get('join_date', datetime.now().strftime('%Y-%m-%d'))
+    join_date       = datetime.strptime(join_date_str, '%Y-%m-%d')
     days_in_project = (datetime.now() - join_date).days
-
     update_user_name(storage, callback.from_user.id, callback.from_user.first_name or "")
-
     await callback.message.edit_text(
         get_profile_text(callback.from_user.first_name, days_in_project, callback.from_user.id),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_profile_menu(),
-        disable_web_page_preview=True
+        parse_mode=ParseMode.HTML, reply_markup=get_profile_menu(), disable_web_page_preview=True
     )
     _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
 
-# ========== ИГРЫ ==========
+# ========== CALLBACK: ИГРЫ ==========
 @router.callback_query(F.data == "games")
 async def games_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -628,15 +496,11 @@ async def games_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
         get_games_menu_text(callback.from_user.id),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_games_menu(),
-        disable_web_page_preview=True
+        parse_mode=ParseMode.HTML, reply_markup=get_games_menu(), disable_web_page_preview=True
     )
     _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
-
-# ========== МИНЫ — ВХОД ==========
 @router.callback_query(F.data == "mines_menu")
 async def mines_menu_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -645,8 +509,6 @@ async def mines_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await show_mines_menu(callback, storage, betting_game)
 
-
-# ========== БАШНЯ — ВХОД ==========
 @router.callback_query(F.data == "tower_menu")
 async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -655,190 +517,131 @@ async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await show_tower_menu(callback, storage, betting_game)
 
-
-# ========== ОСТАЛЬНЫЕ ИГРЫ ==========
 @router.callback_query(F.data == GAME_CALLBACKS['dice'])
 async def dice_menu(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_dice_menu(callback)
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
+    await state.clear(); await show_dice_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['basketball'])
 async def basketball_menu(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_basketball_menu(callback)
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
+    await state.clear(); await show_basketball_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['football'])
 async def football_menu(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_football_menu(callback)
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
+    await state.clear(); await show_football_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['darts'])
 async def darts_menu(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_darts_menu(callback)
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
+    await state.clear(); await show_darts_menu(callback)
 
 @router.callback_query(F.data == GAME_CALLBACKS['bowling'])
 async def bowling_menu(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_bowling_menu(callback)
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
+    await state.clear(); await show_bowling_menu(callback)
 
 @router.callback_query(F.data == "bet_dice_exact")
 async def exact_number_menu(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    await show_exact_number_menu(callback)
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
+    await state.clear(); await show_exact_number_menu(callback)
 
 @router.callback_query(F.data.startswith("bet_"))
 async def handle_bet_selection(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
     await request_amount(callback, state, betting_game)
 
 @router.callback_query(F.data == "cancel_bet")
 async def handle_cancel_bet(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
     await cancel_bet(callback, state, betting_game)
 
 
-# ========== ПОПОЛНЕНИЕ (из профиля) ==========
+# ========== CALLBACK: ПОПОЛНЕНИЕ / ВЫВОД ==========
 @router.callback_query(F.data == "deposit")
 async def deposit_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
-        return
+        await callback.answer("🚫 Это не ваш профиль!", show_alert=True); return
     await state.clear()
     storage.set_pending(callback.from_user.id, 'deposit')
     await callback.message.edit_text(
         f'<b><tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Пополнение баланса</b>\n\n'
-        f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму пополнения:</i></blockquote>',
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_cancel_menu()
+        f'<blockquote><i>Введите сумму пополнения:</i></blockquote>',
+        parse_mode=ParseMode.HTML, reply_markup=get_cancel_menu()
     )
     await callback.answer()
 
-
-# ========== ВЫВОД (из профиля) ==========
 @router.callback_query(F.data == "withdraw")
 async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваш профиль!", show_alert=True)
-        return
+        await callback.answer("🚫 Это не ваш профиль!", show_alert=True); return
     await state.clear()
     storage.set_pending(callback.from_user.id, 'withdraw')
     await callback.message.edit_text(
         f'<b><tg-emoji emoji-id="{EMOJI_WITHDRAWAL}">💸</tg-emoji> Вывод средств</b>\n\n'
-        f'<blockquote><i><tg-emoji emoji-id="5197269100878907942">💸</tg-emoji> Введите сумму вывода:</i></blockquote>',
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_cancel_menu()
+        f'<blockquote><i>Введите сумму вывода:</i></blockquote>',
+        parse_mode=ParseMode.HTML, reply_markup=get_cancel_menu()
     )
     await callback.answer()
 
 
-# ========== КОМАНДА ПЕРЕВОДА ==========
+# ========== ПЕРЕВОД ==========
 @router.message(F.text.regexp(r'(?i)^(?:/)?(?:pay|дать)\s+[\d.,]+$'))
 async def handle_transfer(message: Message, state: FSMContext):
     if not message.reply_to_message:
         await message.reply(
             f'❌<b>Команда должна быть ответом на сообщение игрока!</b>\n\n'
-            f'<blockquote><i>Ответьте на сообщение нужного игрока и введите команду:\n'
+            f'<blockquote><i>Ответьте на сообщение нужного игрока:\n'
             f'<code>дать 100</code> или <code>/pay 100</code></i></blockquote>',
             parse_mode=ParseMode.HTML
         )
         return
 
     target = message.reply_to_message.from_user
-
     if target.id == message.from_user.id:
-        await message.reply(
-            "<blockquote>❌<b>Нельзя переводить самому себе!</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
+        await message.reply("<blockquote>❌<b>Нельзя переводить самому себе!</b></blockquote>", parse_mode=ParseMode.HTML); return
     if target.is_bot:
-        await message.reply(
-            "<blockquote>❌<b>Нельзя переводить ботам!</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
+        await message.reply("<blockquote>❌<b>Нельзя переводить ботам!</b></blockquote>", parse_mode=ParseMode.HTML); return
 
     match = TRANSFER_PATTERN.match(message.text.strip())
     if not match:
         return
-
     try:
         amount = float(match.group(1).replace(',', '.'))
     except ValueError:
-        await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML)
-        return
+        await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML); return
 
     if amount < MIN_TRANSFER:
-        await message.reply(
-            f"<blockquote>❌<b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji></b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
+        await message.reply(f"<blockquote>❌<b>Мин. сумма перевода: <code>{MIN_TRANSFER}</code>💰</b></blockquote>", parse_mode=ParseMode.HTML); return
     if amount > MAX_TRANSFER:
-        await message.reply(
-            f"<blockquote>❌<b>Максимальная сумма перевода: <code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji></b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
+        await message.reply(f"<blockquote>❌<b>Макс. сумма перевода: <code>{MAX_TRANSFER:,.0f}</code>💰</b></blockquote>", parse_mode=ParseMode.HTML); return
 
-    sender_balance = storage.get_balance(message.from_user.id)
-    if sender_balance < amount:
-        await message.reply(
-            f"<blockquote>❌<b>Недостаточно средств!</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
+    if storage.get_balance(message.from_user.id) < amount:
+        await message.reply("<blockquote>❌<b>Недостаточно средств!</b></blockquote>", parse_mode=ParseMode.HTML); return
 
     lock = _get_transfer_lock(message.from_user.id)
     if lock.locked():
-        await message.reply(
-            "<blockquote>⏳<b>Перевод уже обрабатывается. Подождите.</b></blockquote>",
-            parse_mode=ParseMode.HTML
-        )
-        return
+        await message.reply("<blockquote>⏳<b>Перевод уже обрабатывается.</b></blockquote>", parse_mode=ParseMode.HTML); return
 
     async with lock:
-        sender_balance_now = storage.get_balance(message.from_user.id)
-        if sender_balance_now < amount:
-            await message.reply(
-                "<blockquote>❌<b>Недостаточно средств!</b></blockquote>",
-                parse_mode=ParseMode.HTML
-            )
-            return
+        if storage.get_balance(message.from_user.id) < amount:
+            await message.reply("<blockquote>❌<b>Недостаточно средств!</b></blockquote>", parse_mode=ParseMode.HTML); return
         storage.get_user(target.id)
         storage.add_balance(message.from_user.id, -amount)
         storage.add_balance(target.id, amount)
 
-    target_name = target.first_name or "Игрок"
     await message.reply(
-        f"<tg-emoji emoji-id='5206607081334906820'>💰</tg-emoji><b>Перевод выполнен!</b>\n\n"
-        f"<blockquote>"
-        f"<tg-emoji emoji-id='5195033767969839232'>💰</tg-emoji>Вы отправили <code>{amount:,.2f}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji> игроку <b>{target_name}</b>"
+        f"💰 <b>Перевод выполнен!</b>\n\n<blockquote>"
+        f"Вы отправили <code>{amount:,.2f}</code>💰 игроку <b>{target.first_name or 'Игрок'}</b>"
         f"</blockquote>",
         parse_mode=ParseMode.HTML
     )
@@ -846,31 +649,23 @@ async def handle_transfer(message: Message, state: FSMContext):
 
 
 # ========== СПЕЦИФИЧНЫЕ ТЕКСТОВЫЕ КОМАНДЫ ==========
-
 @router.message(F.text.regexp(r'(?i)^(?:/)?(?:mines|мины)\s+[\d.,]+\s+\d+$'))
 async def mines_command_handler(message: Message, state: FSMContext):
     await process_mines_command(message, state, storage)
-
 
 @router.message(F.text.regexp(r'(?i)^(?:/)?(?:tower|башня)\s+[\d.,]+\s+\d+$'))
 async def tower_command_handler(message: Message, state: FSMContext):
     await process_tower_command(message, state, storage)
 
-
-# ========== КОМАНДА МЕНЮ ИГР ==========
 @router.message(F.text.regexp(GAMES_PATTERN))
 async def handle_games_command(message: Message, state: FSMContext):
     await state.clear()
     sent = await message.answer(
         get_games_menu_text(message.from_user.id),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_games_menu(),
-        disable_web_page_preview=True
+        parse_mode=ParseMode.HTML, reply_markup=get_games_menu(), disable_web_page_preview=True
     )
     _set_msg_owner(sent.message_id, message.from_user.id)
 
-
-# ========== КОМАНДА ПОПОЛНЕНИЯ ==========
 @router.message(F.text.regexp(DEP_PATTERN))
 async def handle_dep_command_main(message: Message, state: FSMContext):
     from payments import _process_deposit
@@ -891,54 +686,46 @@ async def handle_dep_command_main(message: Message, state: FSMContext):
 async def handle_text_message(message: Message, state: FSMContext):
     from payments import handle_amount_input
 
-    # ── Баланс ────────────────────────────────────────────────────────────────
+    # Баланс
     if is_balance_command(message.text):
         balance = sync_balances(message.from_user.id)
         await message.reply(
             f'<blockquote><b><tg-emoji emoji-id="5278467510604160626">💰</tg-emoji> '
             f'<code>{balance:,.2f}</code> '
             f'<tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>\n\n'
-            f'<blockquote><i>Выберите действие ниже <tg-emoji emoji-id="5201691993775818138">💰</tg-emoji></i></blockquote>',
-            parse_mode=ParseMode.HTML,
-            reply_markup=get_balance_menu()
+            f'<blockquote><i>Выберите действие ниже</i></blockquote>',
+            parse_mode=ParseMode.HTML, reply_markup=get_balance_menu()
         )
         return
 
-    # ── /mygames ──────────────────────────────────────────────────────────────
+    # /mygames
     if is_mygames_command(message.text):
         await handle_mygames(message)
         return
 
-    # ── /del ──────────────────────────────────────────────────────────────────
+    # /del
     if is_del_command(message.text):
         await handle_del(message)
         return
 
     current_state = await state.get_state()
 
-    # ── Промокод ──────────────────────────────────────────────────────────────
+    # Промокод
     if current_state == PromoState.entering_code.state:
         code = message.text.strip()
         ok, amount, reason = promo_use(code, message.from_user.id)
-
         if ok:
             storage.get_user(message.from_user.id)
             storage.add_balance(message.from_user.id, amount)
             new_balance = storage.get_balance(message.from_user.id)
             await state.clear()
             await message.answer(
-                f'✅ <b>Промокод активирован!</b>\n\n'
-                f'<blockquote>'
-                f'<tg-emoji emoji-id="{EMOJI_WALLET}">💰</tg-emoji> Начислено: <b><code>+{amount:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>\n'
-                f'<tg-emoji emoji-id="5278467510604160626">💰</tg-emoji> Баланс: <b><code>{new_balance:.2f}</code></b> <tg-emoji emoji-id="5197434882321567830">💰</tg-emoji>'
-                f'</blockquote>',
+                f'✅ <b>Промокод активирован!</b>\n\n<blockquote>'
+                f'Начислено: <b><code>+{amount:.2f}</code>💰</b>\n'
+                f'Баланс: <b><code>{new_balance:.2f}</code>💰</b></blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
-                    InlineKeyboardButton(
-                        text="На главную",
-                        callback_data="back_to_main",
-                        icon_custom_emoji_id=EMOJI_BACK
-                    )
+                    InlineKeyboardButton(text="На главную", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
                 ]])
             )
         else:
@@ -947,41 +734,38 @@ async def handle_text_message(message: Message, state: FSMContext):
                 "already_used": "Вы уже активировали этот промокод.",
                 "expired":      "Промокод больше не активен — все активации израсходованы.",
             }
-            err_msg = error_texts.get(reason, "Неизвестная ошибка.")
             await message.answer(
-                f"❌ <b>Ошибка активации</b>\n\n"
-                f"<blockquote>{err_msg}</blockquote>",
-                parse_mode=ParseMode.HTML,
-                reply_markup=get_promo_cancel_menu()
+                f"❌ <b>Ошибка активации</b>\n\n<blockquote>{error_texts.get(reason, 'Неизвестная ошибка.')}</blockquote>",
+                parse_mode=ParseMode.HTML, reply_markup=get_promo_cancel_menu()
             )
         return
 
-    # ── Реферальный вывод ─────────────────────────────────────────────────────
+    # Реферальный вывод
     if current_state == ReferralWithdraw.entering_amount.state:
         await ref_withdraw_amount(message, state)
         return
 
-    # ── Мины — ставка ─────────────────────────────────────────────────────────
+    # Мины
     if current_state == MinesGame.choosing_bet:
         await process_mines_bet(message, state, storage)
         return
 
-    # ── Башня — ставка ────────────────────────────────────────────────────────
+    # Башня
     if current_state == TowerGame.choosing_bet:
         await process_tower_bet(message, state, storage)
         return
 
-    # ── Команды дуэлей ────────────────────────────────────────────────────────
+    # Дуэли
     if is_duel_command(message.text):
         await handle_duel_command(message)
         return
 
-    # ── Ставки в обычных играх ────────────────────────────────────────────────
+    # Ставки в обычных играх
     if is_bet_command(message.text):
         await handle_text_bet_command(message, betting_game)
         return
 
-    # ── Числовой ввод (сумма ставки или пополнения) ───────────────────────────
+    # Числовой ввод
     try:
         float(message.text)
         if current_state:
@@ -993,22 +777,18 @@ async def handle_text_message(message: Message, state: FSMContext):
         pass
 
 
-# ========== ЛИДЕРЫ ==========
+# ========== CALLBACK: ЛИДЕРЫ / О ПРОЕКТЕ / НАЗАД ==========
 @router.callback_query(F.data == "leaders")
 async def leaders_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
     await state.clear()
     await show_leaders(callback, storage)
 
-
-# ========== О ПРОЕКТЕ ==========
 @router.callback_query(F.data == "about")
 async def about_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
     await state.clear()
     await callback.message.edit_text(
         f'<tg-emoji emoji-id="{EMOJI_ABOUT}">ℹ️</tg-emoji> <b>О проекте</b>\n\n',
@@ -1019,30 +799,21 @@ async def about_callback(callback: CallbackQuery, state: FSMContext):
                 InlineKeyboardButton(text="Чат",        url=LINK_CHAT,     icon_custom_emoji_id=EMOJI_CHAT),
                 InlineKeyboardButton(text="Инструкция", url=LINK_INSTRUCT, icon_custom_emoji_id=EMOJI_INSTRUCT)
             ],
-            [
-                InlineKeyboardButton(text="Поддержка", url=LINK_SUPPORT, icon_custom_emoji_id=EMOJI_SUPORT)
-            ],
-            [
-                InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
-            ]
+            [InlineKeyboardButton(text="Поддержка", url=LINK_SUPPORT, icon_custom_emoji_id=EMOJI_SUPORT)],
+            [InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)]
         ])
     )
     _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
 
-
-# ========== НА ГЛАВНУЮ ==========
 @router.callback_query(F.data == "back_to_main")
 async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True); return
     await state.clear()
     storage.clear_pending(callback.from_user.id)
     await callback.message.edit_text(
-        get_main_menu_text(),
-        parse_mode=ParseMode.HTML,
-        reply_markup=get_main_menu()
+        get_main_menu_text(), parse_mode=ParseMode.HTML, reply_markup=get_main_menu()
     )
     _set_msg_owner(callback.message.message_id, callback.from_user.id)
     await callback.answer()
@@ -1052,10 +823,7 @@ async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
 async def main():
     global betting_game
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
     await init_db()
     await import_users_from_json()
@@ -1071,7 +839,7 @@ async def main():
 
     betting_game = BettingGame(bot)
 
-    # ВАЖНО: duels_router первым — чтобы F.dice перехватывался раньше всех
+    # ВАЖНО: duels_router первым — F.dice перехватывается раньше всех
     dp.include_router(duels_router)
     dp.include_router(router)
     dp.include_router(mines_router)
@@ -1082,8 +850,8 @@ async def main():
 
     setup_payments(bot)
     setup_referrals(bot)
-    setup_duels(bot, storage)       # ← инициализируем дуэли
-    _inject_leaders_owner_fns()     # ← единый _msg_owners для всех модулей
+    setup_duels(bot, storage)
+    _inject_leaders_owner_fns()
 
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("Бот запущен в режиме поллинга")
