@@ -12,17 +12,21 @@ duels.py — Модуль дуэлей для Telegram-казино.
 
 Логика:
   1. Игрок 1 вводит команду → ставка снимается, карточка дуэли с кнопкой «Принять».
+     Кнопки «Отменить» НЕТ.
   2. Игрок 2 нажимает «Принять» → ставка снимается, игра начинается.
   3. Каждый игрок бросает нужное кол-во раз, делая reply на карточку дуэли.
-     После каждого броска — только карточка обновляется (без уведомлений).
-     Сообщения с бросками удаляются из чата.
+     Сообщения с бросками НЕ удаляются. Результаты записываются, карточка обновляется.
   4. Когда оба бросили все броски — карточка обновляется финальным счётом,
      затем отдельным сообщением выводится результат.
-  5. Таймаут активности: если во время игры один из игроков не бросает
-     5 минут — ставки возвращаются обоим. Каждый бросок сбрасывает таймер.
+  5. Таймаут активности: если во время игры один из игроков не бросает 5 минут:
+     - Карточка дуэли УДАЛЯЕТСЯ из чата
+     - Ботом отправляются личные уведомления обоим игрокам о возврате
+     - Ставки возвращаются обоим без комиссии
+     Каждый бросок сбрасывает таймер.
   6. Ожидание игрока 2: таймаута нет (дуэль ждёт вечно).
-  7. Победитель получает 95% банка. При ничьей — возврат ставок.
-  8. Вместо имён используются @username (если есть).
+  7. Победитель получает 95% банка.
+  8. При ничьей — каждый получает обратно 95% своей ставки (5% комиссия).
+  9. Вместо имён используются @username (если есть).
 
 Команды управления:
   /mygames | /myg | /моиигры  — список ваших активных дуэлей
@@ -62,10 +66,10 @@ _msg_to_duel: dict[int, str] = {}
 _duel_counter: int = 0
 
 # ─── константы ────────────────────────────────────────────────────────────────
-COMMISSION       = 0.05
+COMMISSION       = 0.05   # 5% с банка победителю не уходит / при ничьей с каждого
 MAX_THROWS       = 5
 MIN_BET          = 0.02
-ACTIVITY_TIMEOUT = 300   # секунд без броска → возврат ставок
+ACTIVITY_TIMEOUT = 300    # секунд без броска → отмена
 
 GAME_EMOJI: dict[str, str] = {
     'dice':       '🎲',
@@ -83,14 +87,14 @@ GAME_NAMES: dict[str, str] = {
 }
 
 # ─── паттерны команд ──────────────────────────────────────────────────────────
-_A = r'([\d.,]+)'  # сумма
-_N = r'(\d+)?'    # необязательное кол-во бросков
+_A = r'([\d.,]+)'
+_N = r'(\d+)?'
 
-DICE_PAT       = re.compile(r'^/?(?:кубх|cubx|cubex)'                     + _N + r'\s+' + _A + r'$', re.I)
-DARTS_PAT      = re.compile(r'^/?(?:дартх|dartx|dartsx)'                   + _N + r'\s+' + _A + r'$', re.I)
-BOWLING_PAT    = re.compile(r'^/?(?:боулх|boulx|bowlx|bowlingx)'           + _N + r'\s+' + _A + r'$', re.I)
-FOOTBALL_PAT   = re.compile(r'^/?(?:футх|futx|footx|footballx|football)'   + _N + r'\s+' + _A + r'$', re.I)
-BASKETBALL_PAT = re.compile(r'^/?(?:баскх|basketx|basketballx|basketball)' + _N + r'\s+' + _A + r'$', re.I)
+DICE_PAT       = re.compile(r'^/?(?:кубх|cubx|cubex)'                      + _N + r'\s+' + _A + r'$', re.I)
+DARTS_PAT      = re.compile(r'^/?(?:дартх|dartx|dartsx)'                    + _N + r'\s+' + _A + r'$', re.I)
+BOWLING_PAT    = re.compile(r'^/?(?:боулх|boulx|bowlx|bowlingx)'            + _N + r'\s+' + _A + r'$', re.I)
+FOOTBALL_PAT   = re.compile(r'^/?(?:футх|futx|footx|footballx|football)'    + _N + r'\s+' + _A + r'$', re.I)
+BASKETBALL_PAT = re.compile(r'^/?(?:баскх|basketx|basketballx|basketball)'  + _N + r'\s+' + _A + r'$', re.I)
 
 DUEL_PATTERNS: list[tuple] = [
     (DICE_PAT,       'dice'),
@@ -100,7 +104,6 @@ DUEL_PATTERNS: list[tuple] = [
     (BASKETBALL_PAT, 'basketball'),
 ]
 
-# Паттерны управляющих команд
 MYGAMES_PAT = re.compile(r'^/?(?:mygames|myg|моиигры)$', re.I)
 DEL_PAT     = re.compile(r'^/?(?:del|дел)$', re.I)
 
@@ -123,7 +126,6 @@ def _throws_word(n: int) -> str:
 
 
 def _fmt_user(first_name: str, username: str | None) -> str:
-    """@username если есть, иначе first_name."""
     return f"@{username}" if username else (first_name or "Игрок")
 
 
@@ -164,7 +166,7 @@ def is_del_command(text: str) -> bool:
     return bool(text and DEL_PAT.match(text.strip()))
 
 
-# ─── текст карточки дуэли ─────────────────────────────────────────────────────
+# ─── текст карточки ───────────────────────────────────────────────────────────
 def _duel_card_text(duel: dict, *, extra: str = "") -> str:
     gt    = duel['game_type']
     emoji = GAME_EMOJI[gt]
@@ -192,7 +194,7 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
         def fmt(scores: list) -> str:
             cnt = len(scores)
             if cnt == 0:
-                return f"0/{n}"
+                return f"—  (0/{n})"
             parts = " + ".join(str(s) for s in scores)
             if cnt > 1:
                 return f"{parts} = <b>{sum(scores)}</b>  ({cnt}/{n})"
@@ -211,9 +213,9 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
 
 
 def _join_kb(duel_id: str) -> InlineKeyboardMarkup:
+    """Только кнопка «Принять» — без отмены."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⚔️ Принять дуэль", callback_data=f"duel_join:{duel_id}")],
-        [InlineKeyboardButton(text="❌ Отменить",       callback_data=f"duel_cancel:{duel_id}")],
     ])
 
 
@@ -225,7 +227,7 @@ def _playing_hint(duel: dict) -> str:
     p1d   = len(duel['player1_scores'])
     p2d   = len(duel['player2_scores'])
 
-    def st(done):
+    def st(done: int) -> str:
         if done >= n:
             return "✅ готово"
         left = n - done
@@ -253,11 +255,16 @@ def _start_activity_task(duel_id: str):
     if not duel:
         return
     _cancel_activity_task(duel)
-    task = asyncio.create_task(_activity_timeout(duel_id))
-    duel['activity_task'] = task
+    duel['activity_task'] = asyncio.create_task(_activity_timeout(duel_id))
 
 
 async def _activity_timeout(duel_id: str):
+    """
+    5 минут без броска → отмена:
+    1. Сообщение карточки УДАЛЯЕТСЯ из чата.
+    2. Обоим игрокам в личку приходит уведомление о возврате.
+    3. Ставки возвращаются без комиссии.
+    """
     await asyncio.sleep(ACTIVITY_TIMEOUT)
     duel = _duels.get(duel_id)
     if not duel or duel['status'] != 'playing':
@@ -267,28 +274,44 @@ async def _activity_timeout(duel_id: str):
     _cancel_activity_task(duel)
     _msg_to_duel.pop(duel.get('message_id'), None)
 
-    amt = duel['amount']
-    _storage.add_balance(duel['player1'], amt)
-    _storage.add_balance(duel['player2'], amt)
+    amt  = duel['amount']
+    p1   = duel['player1']
+    p2   = duel['player2']
+    p1t  = duel['player1_tag']
+    p2t  = duel['player2_tag']
+    gt   = duel['game_type']
+    name = GAME_NAMES[gt]
+    emoji= GAME_EMOJI[gt]
 
-    p1t = duel['player1_tag']
-    p2t = duel['player2_tag']
+    # Возвращаем ставки
+    _storage.add_balance(p1, amt)
+    _storage.add_balance(p2, amt)
 
+    # 1. Удаляем карточку дуэли из чата
     try:
-        await _bot.edit_message_text(
-            _duel_card_text(duel) +
-            f"\n\n<blockquote>⏱ <b>Дуэль отменена по таймауту!</b>\n"
-            f"Один из игроков не сделал бросок за 5 минут.\n"
-            f"Ставки возвращены: {p1t} и {p2t} получили по <code>{amt:.2f}</code>💰</blockquote>",
+        await _bot.delete_message(
             chat_id=duel['chat_id'],
-            message_id=duel['message_id'],
-            parse_mode=ParseMode.HTML,
-            reply_markup=None
+            message_id=duel['message_id']
         )
     except Exception:
         pass
 
-    logging.info(f"[Duels] {duel_id} отменена по таймауту активности.")
+    # 2. Личное уведомление игроку 1
+    notify_text = (
+        f"⏱ <b>Дуэль отменена по таймауту!</b>\n\n"
+        f"<blockquote>"
+        f"{emoji} {name}  •  {p1t} vs {p2t}\n\n"
+        f"Один из игроков не сделал бросок за 5 минут.\n"
+        f"💰 Возврат: <code>+{amt:.2f}</code>💰"
+        f"</blockquote>"
+    )
+    for uid in (p1, p2):
+        try:
+            await _bot.send_message(uid, notify_text, parse_mode=ParseMode.HTML)
+        except Exception:
+            pass
+
+    logging.info(f"[Duels] {duel_id} отменена по таймауту, ставки возвращены.")
 
 
 # ─── создание дуэли ───────────────────────────────────────────────────────────
@@ -399,44 +422,14 @@ async def cb_duel_join(callback: CallbackQuery) -> None:
     logging.info(f"[Duels] {duel_id}: игрок {user_id} принял дуэль.")
 
 
-# ─── CALLBACK: отменить дуэль ─────────────────────────────────────────────────
-@duels_router.callback_query(F.data.startswith("duel_cancel:"))
-async def cb_duel_cancel(callback: CallbackQuery) -> None:
-    duel_id = callback.data.split(":", 1)[1]
-    duel    = _duels.get(duel_id)
-
-    if not duel:
-        await callback.answer("❌ Дуэль не найдена.", show_alert=True)
-        return
-    if duel['status'] != 'waiting':
-        await callback.answer("❌ Дуэль уже нельзя отменить.", show_alert=True)
-        return
-    if callback.from_user.id != duel['player1']:
-        await callback.answer("❌ Только создатель может отменить дуэль.", show_alert=True)
-        return
-
-    duel['status'] = 'cancelled'
-    _storage.add_balance(duel['player1'], duel['amount'])
-    _msg_to_duel.pop(duel.get('message_id'), None)
-
-    await callback.message.edit_text(
-        "❌ <b>Дуэль отменена</b>\n\n"
-        "<blockquote>Создатель отменил дуэль. Ставка возвращена.</blockquote>",
-        parse_mode=ParseMode.HTML,
-        reply_markup=None
-    )
-    await callback.answer("Дуэль отменена, ставка возвращена.")
-    logging.info(f"[Duels] {duel_id} отменена создателем.")
-
-
 # ─── обработчик броска ────────────────────────────────────────────────────────
 @duels_router.message(F.dice)
 async def handle_dice_throw(message: Message) -> None:
     """
     Ловит все dice-сообщения.
     Обрабатывает только reply на карточку активной дуэли.
-    Никаких ответных уведомлений — только обновление карточки.
-    Само сообщение с броском удаляется из чата.
+    Сообщения с бросками НЕ удаляются.
+    Только записывает результат и обновляет карточку.
     """
     if not message.reply_to_message:
         return
@@ -466,13 +459,8 @@ async def handle_dice_throw(message: Message) -> None:
     if len(scores) >= n:
         return
 
+    # Записываем результат броска
     scores.append(message.dice.value)
-
-    # Удаляем сообщение с броском из чата (чисто)
-    try:
-        await message.delete()
-    except Exception:
-        pass
 
     # Сбрасываем таймер активности
     _start_activity_task(duel_id)
@@ -480,12 +468,12 @@ async def handle_dice_throw(message: Message) -> None:
     p1_done = len(duel['player1_scores'])
     p2_done = len(duel['player2_scores'])
 
-    # Оба сделали все броски — финал
+    # Оба завершили — финал
     if p1_done >= n and p2_done >= n:
         await _finish_duel(duel_id, message)
         return
 
-    # Обновляем карточку с новым счётом
+    # Обновляем карточку
     try:
         await _bot.edit_message_text(
             _duel_card_text(duel) + _playing_hint(duel),
@@ -523,6 +511,7 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     p2_det = " + ".join(str(s) for s in duel['player2_scores'])
 
     if p1sum > p2sum:
+        # Победа P1
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
         result_msg = (
@@ -537,6 +526,7 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         logging.info(f"[Duels] {duel_id} завершена. Победитель {winner_id} ({winner_tag}), приз {prize}")
 
     elif p2sum > p1sum:
+        # Победа P2
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
         result_msg = (
@@ -551,19 +541,22 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         logging.info(f"[Duels] {duel_id} завершена. Победитель {winner_id} ({winner_tag}), приз {prize}")
 
     else:
-        _storage.add_balance(p1, amount)
-        _storage.add_balance(p2, amount)
+        # Ничья — каждый получает обратно 95% своей ставки (5% комиссия)
+        refund = round(amount * (1 - COMMISSION), 8)
+        _storage.add_balance(p1, refund)
+        _storage.add_balance(p2, refund)
         result_msg = (
             f"🤝 <b>Ничья!</b>\n\n"
             f"<blockquote>"
             f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
             f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
-            f"💰 Ставки возвращены: по <code>{amount:.2f}</code>💰 каждому."
+            f"💰 Возврат с комиссией 5%: по <code>{refund:.2f}</code>💰 каждому\n"
+            f"<i>(от ставки <code>{amount:.2f}</code>💰)</i>"
             f"</blockquote>"
         )
-        logging.info(f"[Duels] {duel_id} завершена ничьей.")
+        logging.info(f"[Duels] {duel_id} ничья. Каждый получил {refund} (с комиссией 5%)")
 
-    # Обновляем карточку — финальный счёт (без статусной строки)
+    # Обновляем карточку — финальный счёт
     try:
         await _bot.edit_message_text(
             _duel_card_text(duel),
@@ -575,7 +568,7 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     except Exception:
         pass
 
-    # Новым сообщением — итог
+    # Отдельным сообщением — итог
     await trigger_msg.answer(result_msg, parse_mode=ParseMode.HTML)
 
 
@@ -597,12 +590,12 @@ async def handle_mygames(message: Message) -> None:
 
     lines = ["📋 <b>Ваши активные дуэли:</b>\n"]
     for did, d in active:
-        e     = GAME_EMOJI[d['game_type']]
-        name  = GAME_NAMES[d['game_type']]
-        n     = d['throws']
-        amt   = d['amount']
-        p2t   = d['player2_tag'] or "???"
-        st    = "⏳ ждёт игрока" if d['status'] == 'waiting' else "⚔️ идёт"
+        e    = GAME_EMOJI[d['game_type']]
+        name = GAME_NAMES[d['game_type']]
+        n    = d['throws']
+        amt  = d['amount']
+        p2t  = d['player2_tag'] or "???"
+        st   = "⏳ ждёт игрока" if d['status'] == 'waiting' else "⚔️ идёт"
 
         if d['status'] == 'playing':
             p1d = len(d['player1_scores'])
@@ -611,9 +604,7 @@ async def handle_mygames(message: Message) -> None:
         else:
             sc = f"🎯 vs {p2t}"
 
-        lines.append(
-            f"{e} <b>{name}</b> x{n}  💰<code>{amt:.2f}</code>  [{st}]\n{sc}\n"
-        )
+        lines.append(f"{e} <b>{name}</b> x{n}  💰<code>{amt:.2f}</code>  [{st}]\n{sc}\n")
 
     await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
 
