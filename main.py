@@ -50,7 +50,9 @@ import payments as _payments_module
 # Импортируем модуль дуэлей
 from duels import (
     duels_router, setup_duels,
-    is_duel_command, handle_duel_command
+    is_duel_command, handle_duel_command,
+    is_mygames_command, handle_mygames,
+    is_del_command, handle_del,
 )
 import duels as _duels_module
 
@@ -233,7 +235,7 @@ def sync_balances(user_id: int):
     return storage.get_balance(user_id)
 
 
-# ========== СТРОКА ССЫЛОК (переиспользуется во всех текстах) ==========
+# ========== СТРОКА ССЫЛОК ==========
 def links_line() -> str:
     return (
         f'<tg-emoji emoji-id="{EMOJI_SUPORT}">💬</tg-emoji> <b>'
@@ -607,7 +609,7 @@ async def profile_callback(callback: CallbackQuery, state: FSMContext):
 
     update_user_name(storage, callback.from_user.id, callback.from_user.first_name or "")
 
-    msg = await callback.message.edit_text(
+    await callback.message.edit_text(
         get_profile_text(callback.from_user.first_name, days_in_project, callback.from_user.id),
         parse_mode=ParseMode.HTML,
         reply_markup=get_profile_menu(),
@@ -755,7 +757,6 @@ async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
 # ========== КОМАНДА ПЕРЕВОДА ==========
 @router.message(F.text.regexp(r'(?i)^(?:/)?(?:pay|дать)\s+[\d.,]+$'))
 async def handle_transfer(message: Message, state: FSMContext):
-    # Проверяем, что это ответ на сообщение
     if not message.reply_to_message:
         await message.reply(
             f'❌<b>Команда должна быть ответом на сообщение игрока!</b>\n\n'
@@ -767,7 +768,6 @@ async def handle_transfer(message: Message, state: FSMContext):
 
     target = message.reply_to_message.from_user
 
-    # Нельзя переводить самому себе
     if target.id == message.from_user.id:
         await message.reply(
             "<blockquote>❌<b>Нельзя переводить самому себе!</b></blockquote>",
@@ -775,7 +775,6 @@ async def handle_transfer(message: Message, state: FSMContext):
         )
         return
 
-    # Нельзя переводить ботам
     if target.is_bot:
         await message.reply(
             "<blockquote>❌<b>Нельзя переводить ботам!</b></blockquote>",
@@ -783,7 +782,6 @@ async def handle_transfer(message: Message, state: FSMContext):
         )
         return
 
-    # Парсим сумму
     match = TRANSFER_PATTERN.match(message.text.strip())
     if not match:
         return
@@ -794,7 +792,6 @@ async def handle_transfer(message: Message, state: FSMContext):
         await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML)
         return
 
-    # Проверка лимитов
     if amount < MIN_TRANSFER:
         await message.reply(
             f"<blockquote>❌<b>Минимальная сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id='5197434882321567830'>💰</tg-emoji></b></blockquote>",
@@ -809,7 +806,6 @@ async def handle_transfer(message: Message, state: FSMContext):
         )
         return
 
-    # Проверка баланса отправителя
     sender_balance = storage.get_balance(message.from_user.id)
     if sender_balance < amount:
         await message.reply(
@@ -818,7 +814,6 @@ async def handle_transfer(message: Message, state: FSMContext):
         )
         return
 
-    # Выполняем перевод атомарно — защита от двойной отправки
     lock = _get_transfer_lock(message.from_user.id)
     if lock.locked():
         await message.reply(
@@ -828,7 +823,6 @@ async def handle_transfer(message: Message, state: FSMContext):
         return
 
     async with lock:
-        # Повторная проверка баланса внутри локера
         sender_balance_now = storage.get_balance(message.from_user.id)
         if sender_balance_now < amount:
             await message.reply(
@@ -841,7 +835,6 @@ async def handle_transfer(message: Message, state: FSMContext):
         storage.add_balance(target.id, amount)
 
     target_name = target.first_name or "Игрок"
-
     await message.reply(
         f"<tg-emoji emoji-id='5206607081334906820'>💰</tg-emoji><b>Перевод выполнен!</b>\n\n"
         f"<blockquote>"
@@ -849,13 +842,10 @@ async def handle_transfer(message: Message, state: FSMContext):
         f"</blockquote>",
         parse_mode=ParseMode.HTML
     )
-
-    logging.info(
-        f"Перевод: {message.from_user.id} → {target.id} | сумма: {amount}"
-    )
+    logging.info(f"Перевод: {message.from_user.id} → {target.id} | сумма: {amount}")
 
 
-# ========== ТЕКСТОВЫЕ СООБЩЕНИЯ ==========
+# ========== СПЕЦИФИЧНЫЕ ТЕКСТОВЫЕ КОМАНДЫ ==========
 
 @router.message(F.text.regexp(r'(?i)^(?:/)?(?:mines|мины)\s+[\d.,]+\s+\d+$'))
 async def mines_command_handler(message: Message, state: FSMContext):
@@ -896,12 +886,12 @@ async def handle_dep_command_main(message: Message, state: FSMContext):
     await _process_deposit(message, message.from_user.id, amount_override=amount)
 
 
-# ========== ТЕКСТОВЫЕ СООБЩЕНИЯ (общий обработчик) ==========
+# ========== ГЛАВНЫЙ ОБРАБОТЧИК ТЕКСТА ==========
 @router.message(F.text)
 async def handle_text_message(message: Message, state: FSMContext):
     from payments import handle_amount_input
 
-    # Команда баланса
+    # ── Баланс ────────────────────────────────────────────────────────────────
     if is_balance_command(message.text):
         balance = sync_balances(message.from_user.id)
         await message.reply(
@@ -914,9 +904,19 @@ async def handle_text_message(message: Message, state: FSMContext):
         )
         return
 
+    # ── /mygames ──────────────────────────────────────────────────────────────
+    if is_mygames_command(message.text):
+        await handle_mygames(message)
+        return
+
+    # ── /del ──────────────────────────────────────────────────────────────────
+    if is_del_command(message.text):
+        await handle_del(message)
+        return
+
     current_state = await state.get_state()
 
-    # Промокод
+    # ── Промокод ──────────────────────────────────────────────────────────────
     if current_state == PromoState.entering_code.state:
         code = message.text.strip()
         ok, amount, reason = promo_use(code, message.from_user.id)
@@ -956,32 +956,32 @@ async def handle_text_message(message: Message, state: FSMContext):
             )
         return
 
-    # Реферальный вывод
+    # ── Реферальный вывод ─────────────────────────────────────────────────────
     if current_state == ReferralWithdraw.entering_amount.state:
         await ref_withdraw_amount(message, state)
         return
 
-    # Мины — ставка
+    # ── Мины — ставка ─────────────────────────────────────────────────────────
     if current_state == MinesGame.choosing_bet:
         await process_mines_bet(message, state, storage)
         return
 
-    # Башня — ставка
+    # ── Башня — ставка ────────────────────────────────────────────────────────
     if current_state == TowerGame.choosing_bet:
         await process_tower_bet(message, state, storage)
         return
 
-    # ========== КОМАНДЫ ДУЭЛЕЙ ==========
+    # ── Команды дуэлей ────────────────────────────────────────────────────────
     if is_duel_command(message.text):
         await handle_duel_command(message)
         return
 
-    # Ставки в обычных играх (кубик, дартс и т.д.)
+    # ── Ставки в обычных играх ────────────────────────────────────────────────
     if is_bet_command(message.text):
         await handle_text_bet_command(message, betting_game)
         return
 
-    # Числовой ввод (сумма ставки или пополнения)
+    # ── Числовой ввод (сумма ставки или пополнения) ───────────────────────────
     try:
         float(message.text)
         if current_state:
@@ -1048,37 +1048,30 @@ async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== ЗАПУСК (ПОЛЛИНГ) ==========
+# ========== ЗАПУСК ==========
 async def main():
     global betting_game
 
-    # Настройка логирования
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
 
-    # Инициализация базы данных
     await init_db()
     await import_users_from_json()
     init_leaders_db()
     logging.info("База данных инициализирована")
 
-    # Инициализация бота и диспетчера
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = Dispatcher(storage=MemoryStorage())
+    dp  = Dispatcher(storage=MemoryStorage())
 
-    # Получаем информацию о боте
     bot_info = await bot.get_me()
     os.environ["BOT_USERNAME"] = bot_info.username
     logging.info(f"Бот запущен как @{bot_info.username}")
 
-    # Инициализация игрового модуля
     betting_game = BettingGame(bot)
 
-    # Подключаем все роутеры
-    # ВАЖНО: duels_router должен стоять ПЕРЕД основным router,
-    # чтобы обработчик F.dice в дуэлях перехватывался раньше
+    # ВАЖНО: duels_router первым — чтобы F.dice перехватывался раньше всех
     dp.include_router(duels_router)
     dp.include_router(router)
     dp.include_router(mines_router)
@@ -1087,13 +1080,11 @@ async def main():
     dp.include_router(payment_router)
     dp.include_router(leaders_router)
 
-    # Настройка модулей
     setup_payments(bot)
     setup_referrals(bot)
-    setup_duels(bot, storage)         # ← инициализация дуэлей
-    _inject_leaders_owner_fns()       # ← единый _msg_owners для всех модулей
+    setup_duels(bot, storage)       # ← инициализируем дуэли
+    _inject_leaders_owner_fns()     # ← единый _msg_owners для всех модулей
 
-    # Удаляем вебхук и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("Бот запущен в режиме поллинга")
     await dp.start_polling(bot)
