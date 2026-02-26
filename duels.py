@@ -298,6 +298,7 @@ async def _activity_timeout(duel_id: str):
         )
     except Exception as e:
         logging.warning(f"[Duels] Не удалось обновить карточку {duel_id}: {e}")
+        print(f"[Duels] ОШИБКА edit карточки {duel_id}: {e}", flush=True)
 
     # 2. Уведомление в чат дуэли (не в ЛС — туда бот не сможет написать первым)
     notify_text = (
@@ -315,7 +316,7 @@ async def _activity_timeout(duel_id: str):
             parse_mode=ParseMode.HTML
         )
     except Exception as e:
-        logging.warning(f"[Duels] Не удалось отправить уведомление в чат {duel['chat_id']}: {e}")
+        print(f"[Duels] ОШИБКА send_message chat={duel.get('chat_id')}: {e}", flush=True)
 
     logging.info(f"[Duels] {duel_id} отменена по таймауту, ставки возвращены.")
 
