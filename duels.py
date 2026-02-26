@@ -19,8 +19,8 @@ duels.py — Модуль дуэлей для Telegram-казино.
   4. Когда оба бросили все броски — карточка обновляется финальным счётом,
      затем отдельным сообщением выводится результат.
   5. Таймаут активности: если во время игры один из игроков не бросает 5 минут:
-     - Карточка дуэли УДАЛЯЕТСЯ из чата
-     - Ботом отправляются личные уведомления обоим игрокам о возврате
+     - Карточка дуэли обновляется текстом "Игра закрыта!"
+     - В чат дуэли отправляется уведомление о возврате
      - Ставки возвращаются обоим без комиссии
      Каждый бросок сбрасывает таймер.
   6. Ожидание игрока 2: таймаута нет (дуэль ждёт вечно).
@@ -261,8 +261,8 @@ def _start_activity_task(duel_id: str):
 async def _activity_timeout(duel_id: str):
     """
     5 минут без броска → отмена:
-    1. Сообщение карточки УДАЛЯЕТСЯ из чата.
-    2. Обоим игрокам в личку приходит уведомление о возврате.
+    1. Карточка дуэли обновляется текстом "Игра закрыта!".
+    2. В чат дуэли отправляется уведомление о возврате.
     3. Ставки возвращаются без комиссии.
     """
     await asyncio.sleep(ACTIVITY_TIMEOUT)
@@ -274,42 +274,48 @@ async def _activity_timeout(duel_id: str):
     _cancel_activity_task(duel)
     _msg_to_duel.pop(duel.get('message_id'), None)
 
-    amt  = duel['amount']
-    p1   = duel['player1']
-    p2   = duel['player2']
-    p1t  = duel['player1_tag']
-    p2t  = duel['player2_tag']
-    gt   = duel['game_type']
-    name = GAME_NAMES[gt]
-    emoji= GAME_EMOJI[gt]
+    amt   = duel['amount']
+    p1    = duel['player1']
+    p2    = duel['player2']
+    p1t   = duel['player1_tag']
+    p2t   = duel['player2_tag']
+    gt    = duel['game_type']
+    name  = GAME_NAMES[gt]
+    emoji = GAME_EMOJI[gt]
 
     # Возвращаем ставки
     _storage.add_balance(p1, amt)
     _storage.add_balance(p2, amt)
 
-    # 1. Удаляем карточку дуэли из чата
+    # 1. Обновляем карточку дуэли
     try:
-        await _bot.delete_message(
+        await _bot.edit_message_text(
+            "🕐 <b>Игра закрыта!</b>",
             chat_id=duel['chat_id'],
-            message_id=duel['message_id']
+            message_id=duel['message_id'],
+            parse_mode=ParseMode.HTML,
+            reply_markup=None
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"[Duels] Не удалось обновить карточку {duel_id}: {e}")
 
-    # 2. Личное уведомление игроку 1
+    # 2. Уведомление в чат дуэли (не в ЛС — туда бот не сможет написать первым)
     notify_text = (
         f"⏱ <b>Дуэль отменена по таймауту!</b>\n\n"
         f"<blockquote>"
         f"{emoji} {name}  •  {p1t} vs {p2t}\n\n"
         f"Один из игроков не сделал бросок за 5 минут.\n"
-        f"💰 Возврат: <code>+{amt:.2f}</code>💰"
+        f"💰 Возврат: {p1t} и {p2t} получили по <code>{amt:.2f}</code>💰"
         f"</blockquote>"
     )
-    for uid in (p1, p2):
-        try:
-            await _bot.send_message(uid, notify_text, parse_mode=ParseMode.HTML)
-        except Exception:
-            pass
+    try:
+        await _bot.send_message(
+            duel['chat_id'],
+            notify_text,
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        logging.warning(f"[Duels] Не удалось отправить уведомление в чат {duel['chat_id']}: {e}")
 
     logging.info(f"[Duels] {duel_id} отменена по таймауту, ставки возвращены.")
 
