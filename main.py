@@ -47,6 +47,13 @@ import tower as _tower_module
 import referrals as _referrals_module
 import payments as _payments_module
 
+# Импортируем модуль дуэлей
+from duels import (
+    duels_router, setup_duels,
+    is_duel_command, handle_duel_command
+)
+import duels as _duels_module
+
 # Импортируем базу данных
 try:
     from database import init_db, import_users_from_json
@@ -160,6 +167,8 @@ def _inject_leaders_owner_fns():
     _referrals_module.is_owner_fn  = _is_msg_owner
     _payments_module.set_owner_fn  = _set_msg_owner
     _payments_module.is_owner_fn   = _is_msg_owner
+    _duels_module.set_owner_fn     = _set_msg_owner
+    _duels_module.is_owner_fn      = _is_msg_owner
 
 
 # ========== FSM ==========
@@ -859,8 +868,6 @@ async def tower_command_handler(message: Message, state: FSMContext):
 
 
 # ========== КОМАНДА МЕНЮ ИГР ==========
-# Работает только при точном вводе: игры | /игры | games | /games
-# Лишний текст после → не срабатывает
 @router.message(F.text.regexp(GAMES_PATTERN))
 async def handle_games_command(message: Message, state: FSMContext):
     await state.clear()
@@ -874,8 +881,6 @@ async def handle_games_command(message: Message, state: FSMContext):
 
 
 # ========== КОМАНДА ПОПОЛНЕНИЯ ==========
-# Работает только при точном вводе: деп 10 | /деп 1.5 | dep 5 | deposit 2.5 и т.д.
-# Лишний текст после числа → не срабатывает
 @router.message(F.text.regexp(DEP_PATTERN))
 async def handle_dep_command_main(message: Message, state: FSMContext):
     from payments import _process_deposit
@@ -891,10 +896,12 @@ async def handle_dep_command_main(message: Message, state: FSMContext):
     await _process_deposit(message, message.from_user.id, amount_override=amount)
 
 
+# ========== ТЕКСТОВЫЕ СООБЩЕНИЯ (общий обработчик) ==========
 @router.message(F.text)
 async def handle_text_message(message: Message, state: FSMContext):
     from payments import handle_amount_input
 
+    # Команда баланса
     if is_balance_command(message.text):
         balance = sync_balances(message.from_user.id)
         await message.reply(
@@ -909,6 +916,7 @@ async def handle_text_message(message: Message, state: FSMContext):
 
     current_state = await state.get_state()
 
+    # Промокод
     if current_state == PromoState.entering_code.state:
         code = message.text.strip()
         ok, amount, reason = promo_use(code, message.from_user.id)
@@ -948,22 +956,32 @@ async def handle_text_message(message: Message, state: FSMContext):
             )
         return
 
+    # Реферальный вывод
     if current_state == ReferralWithdraw.entering_amount.state:
         await ref_withdraw_amount(message, state)
         return
 
+    # Мины — ставка
     if current_state == MinesGame.choosing_bet:
         await process_mines_bet(message, state, storage)
         return
 
+    # Башня — ставка
     if current_state == TowerGame.choosing_bet:
         await process_tower_bet(message, state, storage)
         return
 
+    # ========== КОМАНДЫ ДУЭЛЕЙ ==========
+    if is_duel_command(message.text):
+        await handle_duel_command(message)
+        return
+
+    # Ставки в обычных играх (кубик, дартс и т.д.)
     if is_bet_command(message.text):
         await handle_text_bet_command(message, betting_game)
         return
 
+    # Числовой ввод (сумма ставки или пополнения)
     try:
         float(message.text)
         if current_state:
@@ -1043,7 +1061,7 @@ async def main():
     # Инициализация базы данных
     await init_db()
     await import_users_from_json()
-    init_leaders_db()  # создаёт таблицу leaders_stats и загружает оборот/выигрыши из БД
+    init_leaders_db()
     logging.info("База данных инициализирована")
 
     # Инициализация бота и диспетчера
@@ -1059,6 +1077,9 @@ async def main():
     betting_game = BettingGame(bot)
 
     # Подключаем все роутеры
+    # ВАЖНО: duels_router должен стоять ПЕРЕД основным router,
+    # чтобы обработчик F.dice в дуэлях перехватывался раньше
+    dp.include_router(duels_router)
     dp.include_router(router)
     dp.include_router(mines_router)
     dp.include_router(tower_router)
@@ -1069,14 +1090,12 @@ async def main():
     # Настройка модулей
     setup_payments(bot)
     setup_referrals(bot)
-    _inject_leaders_owner_fns()   # ← единый _msg_owners для всех модулей
+    setup_duels(bot, storage)         # ← инициализация дуэлей
+    _inject_leaders_owner_fns()       # ← единый _msg_owners для всех модулей
 
-    # Удаляем вебхук (на всякий случай) и запускаем поллинг
+    # Удаляем вебхук и запускаем поллинг
     await bot.delete_webhook(drop_pending_updates=True)
-
     logging.info("Бот запущен в режиме поллинга")
-
-    # Запускаем поллинг
     await dp.start_polling(bot)
 
 
