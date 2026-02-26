@@ -266,37 +266,18 @@ def _start_activity_task(duel_id: str):
 
 
 async def _activity_timeout(duel_id: str):
-    """
-    5 минут без броска → отмена:
-    1. Карточка дуэли обновляется текстом "Игра закрыта!".
-    2. В чат дуэли отправляется уведомление о возврате.
-    3. Ставки возвращаются без комиссии.
-    """
     await asyncio.sleep(ACTIVITY_TIMEOUT)
-    print(f"[Duels] Таймаут истёк для {duel_id}", flush=True)
     duel = _duels.get(duel_id)
     if not duel or duel['status'] != 'playing':
-        print(f"[Duels] Таймаут: дуэль {duel_id} уже не playing (status={duel['status'] if duel else 'не найдена'})", flush=True)
         return
 
     duel['status'] = 'cancelled'
     _cancel_activity_task(duel)
     _msg_to_duel.pop(duel.get('message_id'), None)
 
-    amt   = duel['amount']
-    p1    = duel['player1']
-    p2    = duel['player2']
-    p1t   = duel['player1_tag']
-    p2t   = duel['player2_tag']
-    gt    = duel['game_type']
-    name  = GAME_NAMES[gt]
-    emoji = GAME_EMOJI[gt]
+    _storage.add_balance(duel['player1'], duel['amount'])
+    _storage.add_balance(duel['player2'], duel['amount'])
 
-    # Возвращаем ставки
-    _storage.add_balance(p1, amt)
-    _storage.add_balance(p2, amt)
-
-    # 1. Обновляем карточку дуэли
     try:
         await _bot.edit_message_text(
             "🕐 <b>Игра закрыта!</b>",
@@ -306,30 +287,9 @@ async def _activity_timeout(duel_id: str):
             reply_markup=None
         )
     except Exception as e:
-        logging.warning(f"[Duels] Не удалось обновить карточку {duel_id}: {e}")
-        print(f"[Duels] ОШИБКА edit карточки {duel_id}: {e}", flush=True)
+        logging.warning(f"[Duels] edit timeout {duel_id}: {e}")
 
-    # 2. Уведомление в чат дуэли (не в ЛС — туда бот не сможет написать первым)
-    notify_text = (
-        f"⏱ <b>Дуэль отменена по таймауту!</b>\n\n"
-        f"<blockquote>"
-        f"{emoji} {name}  •  {p1t} vs {p2t}\n\n"
-        f"Один из игроков не сделал бросок за 5 минут.\n"
-        f"💰 Возврат: {p1t} и {p2t} получили по <code>{amt:.2f}</code>💰"
-        f"</blockquote>"
-    )
-    try:
-        await _bot.send_message(
-            duel['chat_id'],
-            notify_text,
-            parse_mode=ParseMode.HTML
-        )
-    except Exception as e:
-        print(f"[Duels] ОШИБКА send_message chat={duel.get('chat_id')}: {e}", flush=True)
-
-    logging.info(f"[Duels] {duel_id} отменена по таймауту, ставки возвращены.")
-
-
+    logging.info(f"[Duels] {duel_id} таймаут, ставки возвращены.")
 # ─── создание дуэли ───────────────────────────────────────────────────────────
 async def handle_duel_command(message: Message) -> None:
     result = parse_duel_command(message.text)
