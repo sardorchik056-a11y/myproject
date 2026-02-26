@@ -253,9 +253,16 @@ def _cancel_activity_task(duel: dict):
 def _start_activity_task(duel_id: str):
     duel = _duels.get(duel_id)
     if not duel:
+        print(f"[Duels] _start_activity_task: duel {duel_id} не найдена!", flush=True)
         return
     _cancel_activity_task(duel)
-    duel['activity_task'] = asyncio.create_task(_activity_timeout(duel_id))
+    try:
+        task = asyncio.create_task(_activity_timeout(duel_id))
+        task.add_done_callback(lambda t: print(f"[Duels] Таск {duel_id} завершён, исключение: {t.exception()}" if not t.cancelled() and t.exception() else f"[Duels] Таск {duel_id} завершён нормально/отменён", flush=True))
+        duel['activity_task'] = task
+        print(f"[Duels] Таймер запущен для {duel_id}", flush=True)
+    except Exception as e:
+        print(f"[Duels] ОШИБКА create_task {duel_id}: {e}", flush=True)
 
 
 async def _activity_timeout(duel_id: str):
@@ -266,8 +273,10 @@ async def _activity_timeout(duel_id: str):
     3. Ставки возвращаются без комиссии.
     """
     await asyncio.sleep(ACTIVITY_TIMEOUT)
+    print(f"[Duels] Таймаут истёк для {duel_id}", flush=True)
     duel = _duels.get(duel_id)
     if not duel or duel['status'] != 'playing':
+        print(f"[Duels] Таймаут: дуэль {duel_id} уже не playing (status={duel['status'] if duel else 'не найдена'})", flush=True)
         return
 
     duel['status'] = 'cancelled'
