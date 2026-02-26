@@ -37,6 +37,7 @@ import asyncio
 import logging
 import re
 import time
+from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import (
     Message, CallbackQuery,
@@ -259,18 +260,20 @@ def _start_activity_task(duel_id: str):
     task = loop.create_task(_activity_timeout(duel_id))
     def _on_done(t):
         if t.cancelled():
-            print(f"[Duels] Таск {duel_id} ОТМЕНЁН", flush=True)
+            print(f"[Duels] Таск {duel_id} ОТМЕНЁН в {datetime.now().strftime('%H:%M:%S')}", flush=True)
         elif t.exception():
             print(f"[Duels] Таск {duel_id} УПАЛ: {t.exception()}", flush=True)
         else:
             print(f"[Duels] Таск {duel_id} завершён OK", flush=True)
     task.add_done_callback(_on_done)
     duel['activity_task'] = task
-    print(f"[Duels] Таймер запущен для {duel_id}", flush=True)
+    print(f"[Duels] Таймер запущен для {duel_id} в {datetime.now().strftime('%H:%M:%S')}", flush=True)
 
 
 async def _activity_timeout(duel_id: str):
+    print(f"[Duels] sleep начат для {duel_id} в {datetime.now().strftime('%H:%M:%S')}", flush=True)
     await asyncio.sleep(ACTIVITY_TIMEOUT)
+    print(f"[Duels] sleep закончен для {duel_id} в {datetime.now().strftime('%H:%M:%S')}", flush=True)
     duel = _duels.get(duel_id)
     if not duel or duel['status'] != 'playing':
         return
