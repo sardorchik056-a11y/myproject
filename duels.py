@@ -284,49 +284,120 @@ async def _activity_timeout(duel_id: str):
     if not duel or duel['status'] != 'playing':
         return
 
-    duel['status'] = 'cancelled'
-    # ✅ ИСПРАВЛЕНИЕ: НЕ вызываем _cancel_activity_task здесь — это отменит
-    # текущий выполняющийся таск, и следующий await (edit_message_text) бросит
-    # CancelledError. Просто обнуляем ссылку без отмены самого себя.
     duel['activity_task'] = None
     _msg_to_duel.pop(duel.get('message_id'), None)
 
-    _storage.add_balance(duel['player1'], duel['amount'])
-    _storage.add_balance(duel['player2'], duel['amount'])
-
-    # ✅ ИСПРАВЛЕНИЕ: передаём пустой InlineKeyboardMarkup вместо None
-    # В aiogram 3.x reply_markup=None не убирает кнопки и может вызвать ошибку,
-    # нужно явно передать пустую клавиатуру.
+    p1       = duel['player1']
+    p2       = duel['player2']
+    p1t      = duel['player1_tag']
+    p2t      = duel['player2_tag']
+    p1s      = duel['player1_scores']
+    p2s      = duel['player2_scores']
+    amount   = duel['amount']
+    bank     = amount * 2
+    prize    = round(bank * (1 - COMMISSION), 8)
+    emoji    = GAME_EMOJI[duel['game_type']]
     empty_kb = InlineKeyboardMarkup(inline_keyboard=[])
+
+    # Случай 1: кто-то вообще не бросал → возврат ставок + личка
+    if not p1s or not p2s:
+        duel['status'] = 'cancelled'
+        _storage.add_balance(p1, amount)
+        _storage.add_balance(p2, amount)
+
+        try:
+            await _bot.edit_message_text(
+                "🕐 <b>Игра закрыта!</b>",
+                chat_id=duel['chat_id'],
+                message_id=duel['message_id'],
+                parse_mode=ParseMode.HTML,
+                reply_markup=empty_kb
+            )
+        except Exception as e:
+            print(f"[Duels] ОШИБКА edit: {e}", flush=True)
+
+        for pid, opponent_tag in ((p1, p2t), (p2, p1t)):
+            try:
+                await _bot.send_message(
+                    chat_id=pid,
+                    text=(
+                        f"⚔️ Дуэль против {opponent_tag} закрыта!\n"
+                        f"💰 Ставка <code>{amount:.2f}</code>💰 возвращена."
+                    ),
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e:
+                print(f"[Duels] ОШИБКА личка {pid}: {e}", flush=True)
+
+        logging.info(f"[Duels] {duel_id} таймаут — один не бросал, ставки возвращены.")
+        return
+
+    # Случай 2: оба бросали → победитель по очкам, результат в чат как обычный финал
+    duel['status'] = 'finished'
+    p1sum  = sum(p1s)
+    p2sum  = sum(p2s)
+    p1_det = " + ".join(str(s) for s in p1s)
+    p2_det = " + ".join(str(s) for s in p2s)
+
+    if p1sum > p2sum:
+        winner_id, winner_tag, loser_tag = p1, p1t, p2t
+        _storage.add_balance(winner_id, prize)
+        result_msg = (
+            f"🏆 <b>Победитель: {winner_tag}!</b>\n\n"
+            f"<blockquote>"
+            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f"💰 Приз: <code>+{prize:.2f}</code>💰  (банк {bank:.2f}, комиссия 5%)\n"
+            f"🎉 {winner_tag} побеждает {loser_tag}!"
+            f"</blockquote>"
+        )
+        logging.info(f"[Duels] {duel_id} таймаут-победа {winner_tag}, приз {prize}")
+    elif p2sum > p1sum:
+        winner_id, winner_tag, loser_tag = p2, p2t, p1t
+        _storage.add_balance(winner_id, prize)
+        result_msg = (
+            f"🏆 <b>Победитель: {winner_tag}!</b>\n\n"
+            f"<blockquote>"
+            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f"💰 Приз: <code>+{prize:.2f}</code>💰  (банк {bank:.2f}, комиссия 5%)\n"
+            f"🎉 {winner_tag} побеждает {loser_tag}!"
+            f"</blockquote>"
+        )
+        logging.info(f"[Duels] {duel_id} таймаут-победа {winner_tag}, приз {prize}")
+    else:
+        refund = round(amount * (1 - COMMISSION), 8)
+        _storage.add_balance(p1, refund)
+        _storage.add_balance(p2, refund)
+        result_msg = (
+            f"🤝 <b>Ничья!</b>\n\n"
+            f"<blockquote>"
+            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f"💰 Возврат с комиссией 5%: по <code>{refund:.2f}</code>💰 каждому\n"
+            f"<i>(от ставки <code>{amount:.2f}</code>💰)</i>"
+            f"</blockquote>"
+        )
+        logging.info(f"[Duels] {duel_id} таймаут-ничья, возврат {refund}")
 
     try:
         await _bot.edit_message_text(
-            "🕐 <b>Игра закрыта!</b>",
+            _duel_card_text(duel),
             chat_id=duel['chat_id'],
             message_id=duel['message_id'],
             parse_mode=ParseMode.HTML,
             reply_markup=empty_kb
         )
-        print(f"[Duels] Карточка обновлена chat={duel['chat_id']} msg={duel['message_id']}", flush=True)
     except Exception as e:
-        print(f"[Duels] ОШИБКА edit_message_text chat={duel['chat_id']} msg={duel['message_id']}: {e}", flush=True)
+        print(f"[Duels] ОШИБКА edit: {e}", flush=True)
 
-    # Уведомление в личку каждому игроку с именем соперника
-    amt  = duel['amount']
-    p1t  = duel['player1_tag']
-    p2t  = duel['player2_tag']
-    for pid, opponent_tag in ((duel['player1'], p2t), (duel['player2'], p1t)):
-        notice = (
-            f"⚔️ Дуэль против {opponent_tag} закрыта!\n"
-            f"💰 Ставка <code>{amt:.2f}</code>💰 возвращена."
-        )
-        try:
-            await _bot.send_message(chat_id=pid, text=notice, parse_mode=ParseMode.HTML)
-        except Exception as e:
-            print(f"[Duels] ОШИБКА личка {pid}: {e}", flush=True)
+    await _bot.send_message(
+        chat_id=duel['chat_id'],
+        text=result_msg,
+        parse_mode=ParseMode.HTML
+    )
 
-    logging.info(f"[Duels] {duel_id} таймаут, ставки возвращены.")
-
+    logging.info(f"[Duels] {duel_id} таймаут завершён.")
 
 # ─── создание дуэли ───────────────────────────────────────────────────────────
 async def handle_duel_command(message: Message) -> None:
