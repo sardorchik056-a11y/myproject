@@ -312,7 +312,7 @@ async def _activity_timeout(duel_id: str):
                     chat_id=pid,
                     text=(
                         f"⚔️ Дуэль против {opponent_tag} закрыта!\n"
-                        f"💰 Ставка <code>{amount:.2f}</code>💰 возвращена."
+                        f"<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Ставка <code>{amount:.2f}</code>возвращена!"
                     ),
                     parse_mode=ParseMode.HTML
                 )
@@ -333,12 +333,12 @@ async def _activity_timeout(duel_id: str):
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
         result_msg = (
-            f"🏆 <b>Победитель: {winner_tag}!</b>\n\n"
+            f"<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n"
             f"<blockquote>"
             f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
             f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
-            f"💰 Приз: <code>+{prize:.2f}</code>💰  (банк {bank:.2f}, комиссия 5%)\n"
-            f"🎉 {winner_tag} побеждает {loser_tag}!"
+            f"<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n"
+            f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
         )
         logging.info(f"[Duels] {duel_id} таймаут-победа {winner_tag}, приз {prize}")
@@ -346,12 +346,12 @@ async def _activity_timeout(duel_id: str):
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
         result_msg = (
-            f"🏆 <b>Победитель: {winner_tag}!</b>\n\n"
+            f"<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n"
             f"<blockquote>"
             f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
             f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
-            f"💰 Приз: <code>+{prize:.2f}</code>💰  (банк {bank:.2f}, комиссия 5%)\n"
-            f"🎉 {winner_tag} побеждает {loser_tag}!"
+            f"<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n"
+            f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
         )
         logging.info(f"[Duels] {duel_id} таймаут-победа {winner_tag}, приз {prize}")
@@ -360,12 +360,11 @@ async def _activity_timeout(duel_id: str):
         _storage.add_balance(p1, refund)
         _storage.add_balance(p2, refund)
         result_msg = (
-            f"🤝 <b>Ничья!</b>\n\n"
+            f"🤝<b>Ничья!</b>\n\n"
             f"<blockquote>"
             f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
             f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
-            f"💰 Возврат с комиссией 5%: по <code>{refund:.2f}</code>💰 каждому\n"
-            f"<i>(от ставки <code>{amount:.2f}</code>💰)</i>"
+            f"<tg-emoji emoji-id="5402186569006210455">👤</tg-emoji>Возврат: по <code>{refund:.2f}</code><tg-emoji emoji-id="5197434882321567830">👤</tg-emoji>каждому\n"
             f"</blockquote>"
         )
         logging.info(f"[Duels] {duel_id} таймаут-ничья, возврат {refund}")
@@ -623,12 +622,12 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
         result_msg = (
-            f"🏆 <b>Победитель: {winner_tag}!</b>\n\n"
+            f"<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n"
             f"<blockquote>"
             f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
             f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
-            f"💰 Приз: <code>+{prize:.2f}</code>💰  (банк {bank:.2f}, комиссия 5%)\n"
-            f"🎉 {winner_tag} побеждает {loser_tag}!"
+            f"<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n"
+            f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
         )
         logging.info(f"[Duels] {duel_id} завершена. Победитель {winner_id} ({winner_tag}), приз {prize}")
@@ -637,12 +636,12 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
         result_msg = (
-            f"🏆 <b>Победитель: {winner_tag}!</b>\n\n"
+            f"<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n"
             f"<blockquote>"
             f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
             f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
-            f"💰 Приз: <code>+{prize:.2f}</code>💰  (банк {bank:.2f}, комиссия 5%)\n"
-            f"🎉 {winner_tag} побеждает {loser_tag}!"
+            f"<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n"
+            f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
         )
         logging.info(f"[Duels] {duel_id} завершена. Победитель {winner_id} ({winner_tag}), приз {prize}")
@@ -652,12 +651,11 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         _storage.add_balance(p1, refund)
         _storage.add_balance(p2, refund)
         result_msg = (
-            f"🤝 <b>Ничья!</b>\n\n"
+            f"🤝<b>Ничья!</b>\n\n"
             f"<blockquote>"
             f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
             f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
-            f"💰 Возврат с комиссией 5%: по <code>{refund:.2f}</code>💰 каждому\n"
-            f"<i>(от ставки <code>{amount:.2f}</code>💰)</i>"
+            f"<tg-emoji emoji-id="5402186569006210455">👤</tg-emoji>Возврат: по <code>{refund:.2f}</code><tg-emoji emoji-id="5197434882321567830">👤</tg-emoji>каждому\n"
             f"</blockquote>"
         )
         logging.info(f"[Duels] {duel_id} ничья. Каждый получил {refund} (с комиссией 5%)")
