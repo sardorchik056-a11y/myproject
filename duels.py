@@ -311,13 +311,15 @@ async def _activity_timeout(duel_id: str):
     except Exception as e:
         print(f"[Duels] ОШИБКА edit_message_text chat={duel['chat_id']} msg={duel['message_id']}: {e}", flush=True)
 
-    # Уведомление в личку каждому игроку
-    amt = duel['amount']
-    notice = (
-        f"⏰ <b>Дуэль закрыта по таймауту</b>\n\n"
-        f"<blockquote>💰 Ставка <code>{amt:.2f}</code>💰 возвращена.</blockquote>"
-    )
-    for pid in (duel['player1'], duel['player2']):
+    # Уведомление в личку каждому игроку с именем соперника
+    amt  = duel['amount']
+    p1t  = duel['player1_tag']
+    p2t  = duel['player2_tag']
+    for pid, opponent_tag in ((duel['player1'], p2t), (duel['player2'], p1t)):
+        notice = (
+            f"⚔️ Дуэль против {opponent_tag} закрыта!\n"
+            f"💰 Ставка <code>{amt:.2f}</code>💰 возвращена."
+        )
         try:
             await _bot.send_message(chat_id=pid, text=notice, parse_mode=ParseMode.HTML)
         except Exception as e:
