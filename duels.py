@@ -209,9 +209,9 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
 
         scores_block = (
             f"\n\n<blockquote>"
-            f"<tg-emoji emoji-id="5231200819986047254">👤</tg-emoji> <b>Счёт:</b>\n"
-            f"<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p1t}: {fmt(duel['player1_scores'])}\n"
-            f"<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p2t}: {fmt(duel['player2_scores'])}"
+            f'<tg-emoji emoji-id="5231200819986047254">👤</tg-emoji> <b>Счёт:</b>\n'
+            f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p1t}: {fmt(duel["player1_scores"])}\n'
+            f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p2t}: {fmt(duel["player2_scores"])}'
             f"</blockquote>"
         )
 
