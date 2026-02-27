@@ -91,7 +91,7 @@ GAME_NAMES: dict[str, str] = {
 _A = r'([\d.,]+)'
 _N = r'(\d+)?'
 
-DICE_PAT       = re.compile(r'^/?(?:кубх|cubx|cubex)'                      + _N + r'\s+' + _A + r'$', re.I)
+DICE_PAT       = re.compile(r'^/?(?:кубх|cubx|cubex|dicex)'                      + _N + r'\s+' + _A + r'$', re.I)
 DARTS_PAT      = re.compile(r'^/?(?:дартх|dartx|dartsx)'                    + _N + r'\s+' + _A + r'$', re.I)
 BOWLING_PAT    = re.compile(r'^/?(?:боулх|boulx|bowlx|bowlingx)'            + _N + r'\s+' + _A + r'$', re.I)
 FOOTBALL_PAT   = re.compile(r'^/?(?:футх|futx|footx|footballx|football)'    + _N + r'\s+' + _A + r'$', re.I)
