@@ -335,8 +335,8 @@ async def _activity_timeout(duel_id: str):
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
-            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
-            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f" {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f" {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
             f'<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n'
             f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
@@ -348,8 +348,8 @@ async def _activity_timeout(duel_id: str):
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
-            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
-            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f" {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f" {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
             f'<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n'
             f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
@@ -362,8 +362,8 @@ async def _activity_timeout(duel_id: str):
         result_msg = (
             f"🤝<b>Ничья!</b>\n\n"
             f"<blockquote>"
-            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
-            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f" {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f" {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
             f'<tg-emoji emoji-id="5402186569006210455">👤</tg-emoji>Возврат: по <code>{refund:.2f}</code><tg-emoji emoji-id="5197434882321567830">👤</tg-emoji>каждому\n'
             f"</blockquote>"
         )
@@ -624,8 +624,8 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
-            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
-            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f" {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f" {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
             f'<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n'
             f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
@@ -638,8 +638,8 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
-            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
-            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f" {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f" {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
             f'<tg-emoji emoji-id="5197434882321567830">👤</tg-emoji> Выигрыш: <code>+{prize:.2f}</code>\n'
             f" {winner_tag} побеждает {loser_tag}!"
             f"</blockquote>"
@@ -653,8 +653,8 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         result_msg = (
             f"🤝<b>Ничья!</b>\n\n"
             f"<blockquote>"
-            f"{emoji} {p1t}: {p1_det} = <b>{p1sum}</b>\n"
-            f"{emoji} {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
+            f" {p1t}: {p1_det} = <b>{p1sum}</b>\n"
+            f" {p2t}: {p2_det} = <b>{p2sum}</b>\n\n"
             f'<tg-emoji emoji-id="5402186569006210455">👤</tg-emoji>Возврат: по <code>{refund:.2f}</code><tg-emoji emoji-id="5197434882321567830">👤</tg-emoji>каждому\n'
             f"</blockquote>"
         )
