@@ -190,7 +190,7 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
         f"<blockquote>"
         f'{emoji}<b>{name}</b>\n'
         f'<tg-emoji emoji-id="5400362079783770689">🎯</tg-emoji> <b>{n} {_throws_word(n)}</b>\n'
-        f'<tg-emoji emoji-id="5197434882321567830">💰</tg-emoji> Ставка: <b><code>{amt:.2f}</code></b>\n'
+        f'<tg-emoji emoji-id="5197434882321567830">💰</tg-emoji> Ставка: <b><code>{amt:.2f}</code> × 2</b>\n'
         f'<tg-emoji emoji-id="5278467510604160626">🏆</tg-emoji> Приз: <b><code>{prize:.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
         f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> <b>{p1t}</b>  vs  <tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> <b>{p2t}</b>'
         f"</blockquote>"
@@ -209,9 +209,9 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
 
         scores_block = (
             f"\n\n<blockquote>"
-            f"📊 <b>Счёт:</b>\n"
-            f"👤 {p1t}: {fmt(duel['player1_scores'])}\n"
-            f"👤 {p2t}: {fmt(duel['player2_scores'])}"
+            f"<tg-emoji emoji-id="5231200819986047254">👤</tg-emoji> <b>Счёт:</b>\n"
+            f"<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p1t}: {fmt(duel['player1_scores'])}\n"
+            f"<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p2t}: {fmt(duel['player2_scores'])}"
             f"</blockquote>"
         )
 
@@ -223,34 +223,14 @@ def _join_kb(duel_id: str) -> InlineKeyboardMarkup:
     """Только кнопка «Принять» — без отмены."""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="⚔️ Принять дуэль",
+            text="Принять дуэль",
             callback_data=f"duel_join:{duel_id}",
             icon_custom_emoji_id="5906986955911993888"
         )],
     ])
 
 
-def _playing_hint(duel: dict) -> str:
-    emoji = GAME_EMOJI[duel['game_type']]
-    n     = duel['throws']
-    p1t   = duel['player1_tag']
-    p2t   = duel['player2_tag']
-    p1d   = len(duel['player1_scores'])
-    p2d   = len(duel['player2_scores'])
 
-    def st(done: int) -> str:
-        if done >= n:
-            return "✅ готово"
-        left = n - done
-        return f"⏳ осталось {left} {_throws_word(left)}"
-
-    return (
-        f"\n\n<blockquote>"
-        f'<tg-emoji emoji-id="5906986955911993888">⚔️</tg-emoji> <b>Игра идёт!</b>  Делайте reply на это сообщение и бросайте {emoji}\n'
-        f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p1t} — {st(p1d)}\n'
-        f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p2t} — {st(p2d)}'
-        f"</blockquote>"
-    )
 
 
 # ─── таймер активности ────────────────────────────────────────────────────────
@@ -527,7 +507,7 @@ async def cb_duel_join(callback: CallbackQuery) -> None:
     duel['player2_tag'] = _fmt_user(callback.from_user.first_name, callback.from_user.username)
     duel['status']      = 'playing'
 
-    text = _duel_card_text(duel) + _playing_hint(duel)
+    text = _duel_card_text(duel)
     await callback.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=None)
     await callback.answer("⚔️ Дуэль принята! Начинайте бросать.")
 
@@ -596,7 +576,7 @@ async def handle_dice_throw(message: Message) -> None:
     # Обновляем карточку
     try:
         await _bot.edit_message_text(
-            _duel_card_text(duel) + _playing_hint(duel),
+            _duel_card_text(duel),
             chat_id=duel['chat_id'],
             message_id=duel['message_id'],
             parse_mode=ParseMode.HTML,
