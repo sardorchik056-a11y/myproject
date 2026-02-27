@@ -256,8 +256,13 @@ def _start_activity_task(duel_id: str):
     if not duel:
         return
     _cancel_activity_task(duel)
-    loop = asyncio.get_event_loop()
+    # ✅ ИСПРАВЛЕНИЕ: asyncio.get_running_loop() вместо asyncio.get_event_loop()
+    # get_event_loop() deprecated в Python 3.10+ внутри корутин и может вернуть
+    # неверный loop, из-за чего таск создаётся некорректно и edit_message_text
+    # не выполняется. get_running_loop() всегда возвращает текущий активный loop.
+    loop = asyncio.get_running_loop()
     task = loop.create_task(_activity_timeout(duel_id))
+
     def _on_done(t):
         if t.cancelled():
             print(f"[Duels] Таск {duel_id} ОТМЕНЁН в {datetime.now().strftime('%H:%M:%S')}", flush=True)
@@ -265,6 +270,7 @@ def _start_activity_task(duel_id: str):
             print(f"[Duels] Таск {duel_id} УПАЛ: {t.exception()}", flush=True)
         else:
             print(f"[Duels] Таск {duel_id} завершён OK", flush=True)
+
     task.add_done_callback(_on_done)
     duel['activity_task'] = task
     print(f"[Duels] Таймер запущен для {duel_id} в {datetime.now().strftime('%H:%M:%S')}", flush=True)
@@ -285,19 +291,48 @@ async def _activity_timeout(duel_id: str):
     _storage.add_balance(duel['player1'], duel['amount'])
     _storage.add_balance(duel['player2'], duel['amount'])
 
+    # ✅ ИСПРАВЛЕНИЕ: передаём пустой InlineKeyboardMarkup вместо None
+    # В aiogram 3.x reply_markup=None не убирает кнопки и может вызвать ошибку,
+    # нужно явно передать пустую клавиатуру.
+    empty_kb = InlineKeyboardMarkup(inline_keyboard=[])
+
     try:
         await _bot.edit_message_text(
-            "🕐 <b>Игра закрыта!</b>",
+            "🕐 <b>Игра закрыта!</b>\n\n"
+            "<blockquote>Один из игроков не сделал бросок в течение 5 минут.\n"
+            "Ставки возвращены обоим игрокам.</blockquote>",
             chat_id=duel['chat_id'],
             message_id=duel['message_id'],
             parse_mode=ParseMode.HTML,
-            reply_markup=None
+            reply_markup=empty_kb
         )
         print(f"[Duels] Карточка обновлена chat={duel['chat_id']} msg={duel['message_id']}", flush=True)
     except Exception as e:
         print(f"[Duels] ОШИБКА edit_message_text chat={duel['chat_id']} msg={duel['message_id']}: {e}", flush=True)
 
+    # ✅ ИСПРАВЛЕНИЕ: отправляем уведомление в чат (упоминалось в доке, но отсутствовало в коде)
+    try:
+        p1t = duel['player1_tag']
+        p2t = duel['player2_tag']
+        amt = duel['amount']
+        await _bot.send_message(
+            chat_id=duel['chat_id'],
+            text=(
+                f"⏰ <b>Дуэль завершена по таймауту!</b>\n\n"
+                f"<blockquote>"
+                f"👤 {p1t}  vs  👤 {p2t}\n\n"
+                f"Один из игроков не бросал 5 минут.\n"
+                f"💰 Ставки по <code>{amt:.2f}</code>💰 возвращены каждому."
+                f"</blockquote>"
+            ),
+            parse_mode=ParseMode.HTML
+        )
+    except Exception as e:
+        print(f"[Duels] ОШИБКА send_message таймаут: {e}", flush=True)
+
     logging.info(f"[Duels] {duel_id} таймаут, ставки возвращены.")
+
+
 # ─── создание дуэли ───────────────────────────────────────────────────────────
 async def handle_duel_command(message: Message) -> None:
     result = parse_duel_command(message.text)
