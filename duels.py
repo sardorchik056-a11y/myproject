@@ -188,11 +188,11 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
     header = (
         f"⚔️ <b>Дуэль</b>\n\n"
         f"<blockquote>"
-        f"{emoji}<b>{name}</b>\n"
-        f'<tg-emoji emoji-id="5400362079783770689">🎰</tg-emoji> <b>{n} {_throws_word(n)}</b>\n'
-        f'<tg-emoji emoji-id="5197434882321567830">🎰</tg-emoji> Ставка: <b><code>{amt:.2f}</code> × 2</b>\n'
-        f'<tg-emoji emoji-id="5278467510604160626">🎰</tg-emoji> Приз: <b><code>{prize:.2f}</code><tg-emoji emoji-id="5197434882321567830">🎰</tg-emoji></b>\n'
-        f'<tg-emoji emoji-id="5906581476639513176">🎰</tg-emoji> <b>{p1t}</b>  vs  <tg-emoji emoji-id="5906581476639513176">🎰</tg-emoji> <b>{p2t}</b>'
+        f'{emoji}<b>{name}</b>\n'
+        f'<tg-emoji emoji-id="5400362079783770689">🎯</tg-emoji> <b>{n} {_throws_word(n)}</b>\n'
+        f'<tg-emoji emoji-id="5197434882321567830">💰</tg-emoji> Ставка: <b><code>{amt:.2f}</code></b>\n'
+        f'<tg-emoji emoji-id="5278467510604160626">🏆</tg-emoji> Приз: <b><code>{prize:.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
+        f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> <b>{p1t}</b>  vs  <tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> <b>{p2t}</b>'
         f"</blockquote>"
     )
 
@@ -222,7 +222,11 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
 def _join_kb(duel_id: str) -> InlineKeyboardMarkup:
     """Только кнопка «Принять» — без отмены."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚔️ Принять дуэль", callback_data=f"duel_join:{duel_id}")],
+        [InlineKeyboardButton(
+            text="⚔️ Принять дуэль",
+            callback_data=f"duel_join:{duel_id}",
+            icon_custom_emoji_id="5906986955911993888"
+        )],
     ])
 
 
@@ -242,9 +246,9 @@ def _playing_hint(duel: dict) -> str:
 
     return (
         f"\n\n<blockquote>"
-        f"⚔️ <b>Игра идёт!</b>  Делайте reply на это сообщение и бросайте {emoji}\n"
-        f"👤 {p1t} — {st(p1d)}\n"
-        f"👤 {p2t} — {st(p2d)}"
+        f'<tg-emoji emoji-id="5906986955911993888">⚔️</tg-emoji> <b>Игра идёт!</b>  Делайте reply на это сообщение и бросайте {emoji}\n'
+        f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p1t} — {st(p1d)}\n'
+        f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p2t} — {st(p2d)}'
         f"</blockquote>"
     )
 
