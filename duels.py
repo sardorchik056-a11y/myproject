@@ -301,9 +301,7 @@ async def _activity_timeout(duel_id: str):
 
     try:
         await _bot.edit_message_text(
-            "🕐 <b>Игра закрыта!</b>\n\n"
-            "<blockquote>Один из игроков не сделал бросок в течение 5 минут.\n"
-            "Ставки возвращены обоим игрокам.</blockquote>",
+            "🕐 <b>Игра закрыта!</b>",
             chat_id=duel['chat_id'],
             message_id=duel['message_id'],
             parse_mode=ParseMode.HTML,
@@ -313,25 +311,17 @@ async def _activity_timeout(duel_id: str):
     except Exception as e:
         print(f"[Duels] ОШИБКА edit_message_text chat={duel['chat_id']} msg={duel['message_id']}: {e}", flush=True)
 
-    # ✅ ИСПРАВЛЕНИЕ: отправляем уведомление в чат (упоминалось в доке, но отсутствовало в коде)
-    try:
-        p1t = duel['player1_tag']
-        p2t = duel['player2_tag']
-        amt = duel['amount']
-        await _bot.send_message(
-            chat_id=duel['chat_id'],
-            text=(
-                f"⏰ <b>Дуэль завершена по таймауту!</b>\n\n"
-                f"<blockquote>"
-                f"👤 {p1t}  vs  👤 {p2t}\n\n"
-                f"Один из игроков не бросал 5 минут.\n"
-                f"💰 Ставки по <code>{amt:.2f}</code>💰 возвращены каждому."
-                f"</blockquote>"
-            ),
-            parse_mode=ParseMode.HTML
-        )
-    except Exception as e:
-        print(f"[Duels] ОШИБКА send_message таймаут: {e}", flush=True)
+    # Уведомление в личку каждому игроку
+    amt = duel['amount']
+    notice = (
+        f"⏰ <b>Дуэль закрыта по таймауту</b>\n\n"
+        f"<blockquote>💰 Ставка <code>{amt:.2f}</code>💰 возвращена.</blockquote>"
+    )
+    for pid in (duel['player1'], duel['player2']):
+        try:
+            await _bot.send_message(chat_id=pid, text=notice, parse_mode=ParseMode.HTML)
+        except Exception as e:
+            print(f"[Duels] ОШИБКА личка {pid}: {e}", flush=True)
 
     logging.info(f"[Duels] {duel_id} таймаут, ставки возвращены.")
 
