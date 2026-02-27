@@ -285,7 +285,10 @@ async def _activity_timeout(duel_id: str):
         return
 
     duel['status'] = 'cancelled'
-    _cancel_activity_task(duel)
+    # ✅ ИСПРАВЛЕНИЕ: НЕ вызываем _cancel_activity_task здесь — это отменит
+    # текущий выполняющийся таск, и следующий await (edit_message_text) бросит
+    # CancelledError. Просто обнуляем ссылку без отмены самого себя.
+    duel['activity_task'] = None
     _msg_to_duel.pop(duel.get('message_id'), None)
 
     _storage.add_balance(duel['player1'], duel['amount'])
