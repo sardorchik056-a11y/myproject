@@ -380,17 +380,16 @@ async def _activity_timeout(duel_id: str):
         )
         logging.info(f"[Duels] {duel_id} таймаут-ничья, возврат {refund}")
 
+    # Удаляем карточку дуэли
     try:
-        await _bot.edit_message_text(
-            _duel_card_text(duel),
+        await _bot.delete_message(
             chat_id=duel['chat_id'],
-            message_id=duel['message_id'],
-            parse_mode=ParseMode.HTML,
-            reply_markup=empty_kb
+            message_id=duel['message_id']
         )
     except Exception as e:
-        print(f"[Duels] ОШИБКА edit: {e}", flush=True)
+        print(f"[Duels] ОШИБКА delete: {e}", flush=True)
 
+    # Отправляем результат новым сообщением
     await _bot.send_message(
         chat_id=duel['chat_id'],
         text=result_msg,
@@ -596,7 +595,6 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     p2_det = " + ".join(str(s) for s in duel['player2_scores'])
 
     if p1sum > p2sum:
-        # Победа P1
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
         result_msg = (
@@ -611,7 +609,6 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         logging.info(f"[Duels] {duel_id} завершена. Победитель {winner_id} ({winner_tag}), приз {prize}")
 
     elif p2sum > p1sum:
-        # Победа P2
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
         result_msg = (
@@ -626,7 +623,6 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         logging.info(f"[Duels] {duel_id} завершена. Победитель {winner_id} ({winner_tag}), приз {prize}")
 
     else:
-        # Ничья — каждый получает обратно 95% своей ставки (5% комиссия)
         refund = round(amount * (1 - COMMISSION), 8)
         _storage.add_balance(p1, refund)
         _storage.add_balance(p2, refund)
@@ -641,19 +637,16 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         )
         logging.info(f"[Duels] {duel_id} ничья. Каждый получил {refund} (с комиссией 5%)")
 
-    # Обновляем карточку — финальный счёт
+    # Удаляем карточку дуэли
     try:
-        await _bot.edit_message_text(
-            _duel_card_text(duel),
+        await _bot.delete_message(
             chat_id=duel['chat_id'],
-            message_id=duel['message_id'],
-            parse_mode=ParseMode.HTML,
-            reply_markup=None
+            message_id=duel['message_id']
         )
     except Exception:
         pass
 
-    # Отдельным сообщением — итог
+    # Отправляем результат новым сообщением
     await trigger_msg.answer(result_msg, parse_mode=ParseMode.HTML)
 
 
