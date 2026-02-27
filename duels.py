@@ -69,7 +69,7 @@ _duel_counter: int = 0
 # ─── константы ────────────────────────────────────────────────────────────────
 COMMISSION       = 0.05   # 5% с банка победителю не уходит / при ничьей с каждого
 MAX_THROWS       = 5
-MIN_BET          = 0.02
+MIN_BET          = 0.3
 ACTIVITY_TIMEOUT = 300    # секунд без броска → отмена
 
 GAME_EMOJI: dict[str, str] = {
@@ -126,8 +126,14 @@ def _throws_word(n: int) -> str:
     return "бросков"
 
 
+def _sanitize(text: str) -> str:
+    """Экранируем HTML-спецсимволы в именах пользователей."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 def _fmt_user(first_name: str, username: str | None) -> str:
-    return f"@{username}" if username else (first_name or "Игрок")
+    if username:
+        return f"@{_sanitize(username)}"
+    return _sanitize(first_name) if first_name else "Игрок"
 
 
 def parse_duel_command(text: str):
@@ -416,9 +422,25 @@ async def handle_duel_command(message: Message) -> None:
 
     user_id = message.from_user.id
 
+    MAX_BET = 10000.0
+    import math
+    if not math.isfinite(amount) or amount <= 0:
+        await message.reply(
+            "❌ <b>Некорректная сумма ставки.</b>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
     if amount < MIN_BET:
         await message.reply(
             f"❌ <b>Минимальная ставка: <code>{MIN_BET}</code>💰</b>",
+            parse_mode=ParseMode.HTML
+        )
+        return
+
+    if amount > MAX_BET:
+        await message.reply(
+            f"❌ <b>Максимальная ставка: <code>{MAX_BET:,.0f}</code>💰</b>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -473,7 +495,7 @@ async def cb_duel_join(callback: CallbackQuery) -> None:
     if not duel:
         await callback.answer("❌ Дуэль не найдена.", show_alert=True)
         return
-    if duel['status'] != 'waiting':
+    if duel['status'] not in ('waiting',):
         await callback.answer("❌ Дуэль уже началась или завершена.", show_alert=True)
         return
     if callback.from_user.id == duel['player1']:
@@ -482,9 +504,13 @@ async def cb_duel_join(callback: CallbackQuery) -> None:
 
     user_id = callback.from_user.id
     amount  = duel['amount']
+
+    # Атомарно резервируем дуэль — защита от race condition при одновременных нажатиях
+    duel['status'] = 'joining'
     balance = _storage.get_balance(user_id)
 
     if balance < amount:
+        duel['status'] = 'waiting'  # откатываем если нет денег
         await callback.answer(
             f"❌ Недостаточно средств!\nНужно: {amount:.2f}💰  Баланс: {balance:.2f}💰",
             show_alert=True
@@ -546,6 +572,12 @@ async def handle_dice_throw(message: Message) -> None:
     # Записываем результат броска
     scores.append(message.dice.value)
 
+    # Повторная проверка после записи — защита от race condition
+    # (два одновременных броска могли оба пройти проверку выше)
+    if len(scores) > n:
+        scores.pop()
+        return
+
     # Сбрасываем таймер активности
     _start_activity_task(duel_id)
 
@@ -576,6 +608,15 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     if not duel or duel['status'] != 'playing':
         return
 
+    # Атомарная смена статуса — защита от двойного вызова финала
+    # (оба игрока делают последний бросок почти одновременно)
+    duel['status'] = 'finishing'
+
+    # Повторная проверка после смены — если кто-то успел раньше, выходим
+    if duel.get('_finishing_lock'):
+        duel['status'] = 'finished'
+        return
+    duel['_finishing_lock'] = True
     duel['status'] = 'finished'
     _cancel_activity_task(duel)
     _msg_to_duel.pop(duel.get('message_id'), None)
