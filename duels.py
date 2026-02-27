@@ -189,9 +189,9 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
         f"⚔️ <b>Дуэль</b>\n\n"
         f"<blockquote>"
         f"{emoji} Игра: <b>{name}</b>\n"
-        f"🎯 Бросков: <b>{n} {_throws_word(n)}</b>\n"
+        f"🎯 <b>{n} {_throws_word(n)}</b>\n"
         f"💰 Ставка: <b><code>{amt:.2f}</code> × 2</b>\n"
-        f"🏆 Приз: <b><code>{prize:.2f}</code>💰</b>  (95% банка)\n"
+        f"🏆 Приз: <b><code>{prize:.2f}</code>💰</b>\n"
         f"👤 <b>{p1t}</b>  vs  👤 <b>{p2t}</b>"
         f"</blockquote>"
     )
