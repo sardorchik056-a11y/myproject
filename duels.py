@@ -188,7 +188,7 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
     header = (
         f"⚔️ <b>Дуэль</b>\n\n"
         f"<blockquote>"
-        f"<b>{name}</b>\n"
+        f"{emoji}<b>{name}</b>\n"
         f'<tg-emoji emoji-id="5400362079783770689">🎰</tg-emoji> <b>{n} {_throws_word(n)}</b>\n'
         f'<tg-emoji emoji-id="5197434882321567830">🎰</tg-emoji> Ставка: <b><code>{amt:.2f}</code> × 2</b>\n'
         f'<tg-emoji emoji-id="5278467510604160626">🎰</tg-emoji> Приз: <b><code>{prize:.2f}</code><tg-emoji emoji-id="5197434882321567830">🎰</tg-emoji></b>\n'
