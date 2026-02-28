@@ -80,6 +80,7 @@ EMOJI_CHANNEL    = "5424818078833715060"
 EMOJI_CHAT       = "5443038326535759644"
 EMOJI_SUPORT     = "5907025791006283345"
 EMOJI_PEREXOD    = "5906839307821259375"
+EMOJI_GOLD = "5278467510604160626"
 
 GAME_CALLBACKS = {
     'dice':         'custom_dice_001',
@@ -243,7 +244,7 @@ def get_games_menu():
             InlineKeyboardButton(text="🏰 Башня", callback_data="tower_menu")
         ],
         [
-            InlineKeyboardButton(text="⛏ Золото", callback_data="gold_menu")
+            InlineKeyboardButton(text="Золото", callback_data="gold_menu", icon_custom_emoji_id=EMOJI_GOLD)
         ],
         [
             InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
