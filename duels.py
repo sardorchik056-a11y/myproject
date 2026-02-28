@@ -719,7 +719,7 @@ async def handle_mygames(message: Message) -> None:
         n    = d['throws']
         amt  = d['amount']
         p2t  = d['player2_tag'] or "???"
-        st   = '<tg-emoji emoji-id="5303214794336125778">👤</tg-emoji> ждёт игрока if d['status'] == 'waiting' else "⚔️ идёт'
+        st   = '<tg-emoji emoji-id="5303214794336125778">👤</tg-emoji> ждёт игрока if d['status'] == 'waiting' else '⚔️ идёт'
 
         if d['status'] == 'playing':
             p1d = len(d['player1_scores'])
