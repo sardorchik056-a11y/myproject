@@ -39,8 +39,8 @@ BONUS_COOLDOWN   = 24 * 3600   # 24 часа
 PENALTY_COOLDOWN = 72 * 3600   # 72 часа (штраф за снятие приписки)
 CHECK_INTERVAL   = 2  * 3600   # 2 часа (воркер)
 
-REQUIRED_USERNAME_SUFFIX = "FesteryCas_bot"    # username должен ЗАКАНЧИВАТЬСЯ на это
-REQUIRED_BIO_SUBSTRING   = "@FesteryCas_bot"   # bio должно СОДЕРЖАТЬ это
+REQUIRED_USERNAME_PART = "FesteryCas_bot"                      # username должен СОДЕРЖАТЬ это (где угодно)
+REQUIRED_BIO_SUBSTRING = "лутшая игровая зона-@FesteryCas_bot"  # bio должно СОДЕРЖАТЬ это
 
 # ─── ID кастомных эмодзи ──────────────────────────────────────────────────────
 EMOJI_BACK   = "5906771962734057347"
@@ -102,10 +102,10 @@ def _get_user_state(user_id: int) -> dict:
 
 
 def _check_username(username: str | None) -> bool:
-    """Username должен ЗАКАНЧИВАТЬСЯ на FesteryCas_bot (регистронезависимо)."""
+    """Username должен СОДЕРЖАТЬ FesteryCas_bot где угодно (регистронезависимо)."""
     if not username:
         return False
-    return username.lower().endswith(REQUIRED_USERNAME_SUFFIX.lower())
+    return REQUIRED_USERNAME_PART.lower() in username.lower()
 
 
 def _check_bio(bio: str | None) -> bool:
@@ -202,13 +202,14 @@ async def handle_bonus(message: Message, from_callback: bool = False):
         if not username_ok:
             missing.append(
                 f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> '
-                f'Никнейм должен оканчиваться на <b>{REQUIRED_USERNAME_SUFFIX}</b>\n'
-                f'  Пример: <code>ivan_{REQUIRED_USERNAME_SUFFIX}</code>'
+                f'Никнейм должен содержать <b>FesteryCas_bot</b>\n'
+                f'  Пример: <code>ivan_FesteryCas_bot</code> или <code>FesteryCas_bot_ivan</code>'
             )
         if not bio_ok:
             missing.append(
                 f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> '
-                f'В описании профиля должна быть строка <b>{REQUIRED_BIO_SUBSTRING}</b>'
+                f'В описании профиля должна быть строка:\n'
+                f'  <code>лутшая игровая зона-@FesteryCas_bot</code>'
             )
         await message.answer(
             f'<blockquote><b>'
