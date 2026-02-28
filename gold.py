@@ -59,19 +59,19 @@ EMOJI_MULT2   = "5429651785352501917"
 # ─── ячейки ───────────────────────────────────────────────────────────────────
 CELL_HIDDEN   = "🌑"
 CELL_GOLD     = "💰"
-CELL_BOMB     = "💣"
+CELL_BOMB     = "🧨"
 CELL_EXPLODE  = "💥"
 CELL_SAFE_REV = "▪️"
 CELL_FUTURE   = "🌑"
 
 # ─── конфигурация ─────────────────────────────────────────────────────────────
 FLOORS             = 7
-CELLS              = 2      # кликабельных ячейки на этаж
-BOMB_CHANCE        = 0.60   # 60% бомба, 40% золото — для ЛЮБОЙ нажатой ячейки
+CELLS              = 2      
+BOMB_CHANCE        = 0.60 
 INACTIVITY_TIMEOUT = 300
 
 # Множители за каждый пройденный уровень [1й..7й]
-GOLD_MULTIPLIERS = [1.60, 2.56, 4.10, 6.55, 10.49, 16.78, 26.84]
+GOLD_MULTIPLIERS = [1.9, 3.8, 7.6, 14.5, 29.9, 56.78, 116.84]
 
 # ─── FSM ──────────────────────────────────────────────────────────────────────
 class GoldGame(StatesGroup):
@@ -364,20 +364,8 @@ async def show_gold_menu(callback: CallbackQuery, storage, state: FSMContext = N
 
     balance = storage.get_balance(user_id)
     text = (
-        f"<blockquote><b>⛏ Золото</b></blockquote>\n\n"
-        f"<blockquote>"
-        f'<tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji> Баланс: '
-        f"<code>{balance:.2f}</code>"
-        f'<tg-emoji emoji-id="{EMOJI_COIN}">💰</tg-emoji>'
-        f"</blockquote>\n\n"
-        f"<blockquote>"
-        f"<b>Правила:</b>\n"
-        f"• {FLOORS} уровней, на каждом 2 ячейки\n"
-        f"• Каждая ячейка: 60% 💣 бомба / 40% 💰 золото\n"
-        f"• Пройди все уровни или забери выигрыш в любой момент\n"
-        f"• Максимальный множитель: <b>x{GOLD_MULTIPLIERS[-1]}</b>\n"
-        f"</blockquote>\n\n"
-        f'<tg-emoji emoji-id="{EMOJI_INPUT}">✏️</tg-emoji> <b>Введите сумму ставки:</b>'
+        f'<blockquote><b><tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji> Золото</b></blockquote>\n\n'
+        f'<blockquote><tg-emoji emoji-id="{EMOJI_INPUT}">✏️</tg-emoji> <b>Введите сумму ставки:</b><blockquote>'
     )
     await callback.message.edit_text(
         text,
