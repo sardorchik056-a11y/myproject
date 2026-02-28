@@ -66,7 +66,7 @@ is_owner_fn  = _noop_is_owner
 
 
 # ══════════════════════════════════════════════════════════════════
-#  SQLite: инициализация таблицы игровой статистики
+#  SQLite: инициализация таблицы
 # ══════════════════════════════════════════════════════════════════
 
 def _db_connect() -> sqlite3.Connection:
@@ -76,7 +76,11 @@ def _db_connect() -> sqlite3.Connection:
 
 
 def init_leaders_db():
-    """Создаёт таблицу leaders_stats если её нет, и загружает данные в _stats."""
+    """
+    Создаёт таблицу leaders_stats если её нет.
+    Таблица game_results уже создана в database.py — не дублируем.
+    Загружает данные в память (_stats) и синхронизирует имена из users.
+    """
     try:
         with _db_connect() as conn:
             conn.execute("""
@@ -91,15 +95,16 @@ def init_leaders_db():
                     PRIMARY KEY (user_id, date)
                 )
             """)
-            # Добавляем колонки если таблица уже существовала без них
+            # Миграция: добавляем колонки если таблица уже существовала без них
             for col in ("deposits", "withdrawals"):
                 try:
                     conn.execute(f"ALTER TABLE leaders_stats ADD COLUMN {col} REAL DEFAULT 0.0")
                 except Exception:
-                    pass  # колонка уже есть
+                    pass
             conn.commit()
         logging.info("[Leaders] Таблица leaders_stats готова.")
         _load_stats_from_db()
+        sync_names_from_db()
     except Exception as e:
         logging.error(f"[Leaders] Ошибка инициализации БД: {e}")
 
@@ -134,7 +139,7 @@ def _load_stats_from_db():
 
 
 def _save_stat_to_db(user_id: int, date: str):
-    """Сохраняет одну запись (user_id, date) из _stats в БД."""
+    """Сохраняет одну запись (user_id, date) из _stats в leaders_stats."""
     try:
         day = _stats.get(user_id, {}).get(date)
         if day is None:
@@ -177,6 +182,38 @@ def _ensure_day(user_id: int, date: str, name: str = ""):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  Синхронизация имён из таблицы users (database.py)
+# ══════════════════════════════════════════════════════════════════
+
+def sync_names_from_db():
+    """
+    Подтягивает актуальные имена из таблицы users в кэш _stats.
+    Вызывается автоматически из init_leaders_db() при старте бота.
+    Можно вызвать повторно для принудительного обновления имён.
+    """
+    try:
+        with _db_connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT user_id, first_name, username FROM users")
+            rows = cur.fetchall()
+        updated = 0
+        for row in rows:
+            uid        = int(row["user_id"])
+            first_name = row["first_name"] or ""
+            username   = row["username"]   or ""
+            # Приоритет: @username → first_name → "User {uid}"
+            display = f"@{username}" if username else (first_name or f"User {uid}")
+            if uid in _stats:
+                for date in _stats[uid]:
+                    _stats[uid][date]["name"] = display
+                updated += 1
+        logging.info(f"[Leaders] Имена синхронизированы из users: {updated} пользователей.")
+    except Exception as e:
+        # Таблица users может ещё не существовать при первом запуске
+        logging.warning(f"[Leaders] sync_names_from_db пропущен: {e}")
+
+
+# ══════════════════════════════════════════════════════════════════
 #  Вспомогательные функции дат
 # ══════════════════════════════════════════════════════════════════
 
@@ -205,8 +242,12 @@ def _dates_for_period(period: str) -> list:
 
 def record_game_result(user_id: int, name: str, bet: float, win: float):
     """
-    Вызывается из mines.py / tower.py / game.py / duels.py после каждой завершённой ставки.
-    bet — размер ставки (оборот), win — сумма выплаты (0 при проигрыше).
+    Вызывается из mines.py / tower.py / game.py / duels.py после завершённой ставки.
+    bet  — размер ставки (оборот)
+    win  — сумма выплаты (0.0 при проигрыше)
+
+    Пишет в leaders_stats (агрегированная статистика для лидерборда)
+    и в game_results (подробная история каждой ставки из database.py).
     """
     date = _today_str()
     _ensure_day(user_id, date, name)
@@ -215,11 +256,31 @@ def record_game_result(user_id: int, name: str, bet: float, win: float):
     _stats[user_id][date]["name"]      = name
     _save_stat_to_db(user_id, date)
 
+    # Пишем каждую ставку в общую историю game_results (синхронно, та же casino.db)
+    _save_to_game_results_sync(user_id, "duel", win)
+
+
+def _save_to_game_results_sync(user_id: int, game_name: str, win_amount: float):
+    """
+    Синхронная запись в game_results (таблица из database.py).
+    Используется чтобы не требовать async в record_game_result.
+    """
+    try:
+        with _db_connect() as conn:
+            conn.execute("""
+                INSERT INTO game_results (user_id, game_name, win_amount)
+                VALUES (?, ?, ?)
+            """, (user_id, game_name, win_amount))
+            conn.commit()
+    except Exception as e:
+        logging.error(f"[Leaders] Ошибка записи в game_results: {e}")
+
 
 def record_deposit_stat(user_id: int, name: str, amount: float):
     """
-    Вызывается из payment.py после подтверждения депозита от Cryptobot.
-    Записывает сумму депозита за сегодня — используется в лидерах (период).
+    Вызывается из payment.py после подтверждения депозита.
+    Обновляет leaders_stats (колонка deposits) для лидерборда.
+    Запись в таблицу deposits делается отдельно через database.save_deposit().
     """
     date = _today_str()
     _ensure_day(user_id, date, name)
@@ -231,8 +292,9 @@ def record_deposit_stat(user_id: int, name: str, amount: float):
 
 def record_withdrawal_stat(user_id: int, name: str, amount: float):
     """
-    Вызывается из payment.py после успешного вывода (чек создан и отправлен).
-    Записывает сумму вывода за сегодня — используется в лидерах (период).
+    Вызывается из payment.py после успешного вывода.
+    Обновляет leaders_stats (колонка withdrawals) для лидерборда.
+    Запись в таблицу withdrawals делается отдельно через database.save_withdrawal().
     """
     date = _today_str()
     _ensure_day(user_id, date, name)
@@ -265,7 +327,7 @@ def update_user_name(storage, user_id: int, first_name: str):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Топ-10 — все типы фильтруются по периоду через _stats
+#  Топ-10
 # ══════════════════════════════════════════════════════════════════
 
 def get_top10(storage, leader_type: str, period: str) -> list:
