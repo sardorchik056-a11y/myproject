@@ -205,7 +205,7 @@ def _dates_for_period(period: str) -> list:
 
 def record_game_result(user_id: int, name: str, bet: float, win: float):
     """
-    Вызывается из mines.py / tower.py / game.py после каждой завершённой ставки.
+    Вызывается из mines.py / tower.py / game.py / duels.py после каждой завершённой ставки.
     bet — размер ставки (оборот), win — сумма выплаты (0 при проигрыше).
     """
     date = _today_str()
@@ -265,7 +265,7 @@ def update_user_name(storage, user_id: int, first_name: str):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Топ-10 — теперь ВСЕ типы фильтруются по периоду через _stats
+#  Топ-10 — все типы фильтруются по периоду через _stats
 # ══════════════════════════════════════════════════════════════════
 
 def get_top10(storage, leader_type: str, period: str) -> list:
