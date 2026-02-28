@@ -45,6 +45,15 @@ from aiogram.types import (
 )
 from aiogram.enums import ParseMode
 
+# ─── интеграция с лидерами ────────────────────────────────────────────────────
+try:
+    from leaders import record_game_result as _record_game_result
+    logging.info("[Duels] Интеграция с leaders.py подключена.")
+except ImportError:
+    logging.warning("[Duels] leaders.py не найден — статистика дуэлей не будет записываться.")
+    def _record_game_result(user_id: int, name: str, bet: float, win: float):
+        pass
+
 # ─── внешние зависимости ──────────────────────────────────────────────────────
 set_owner_fn = None
 is_owner_fn  = None
@@ -230,9 +239,6 @@ def _join_kb(duel_id: str) -> InlineKeyboardMarkup:
     ])
 
 
-
-
-
 # ─── таймер активности ────────────────────────────────────────────────────────
 def _cancel_activity_task(duel: dict):
     task = duel.get('activity_task')
@@ -246,10 +252,6 @@ def _start_activity_task(duel_id: str):
     if not duel:
         return
     _cancel_activity_task(duel)
-    # ✅ ИСПРАВЛЕНИЕ: asyncio.get_running_loop() вместо asyncio.get_event_loop()
-    # get_event_loop() deprecated в Python 3.10+ внутри корутин и может вернуть
-    # неверный loop, из-за чего таск создаётся некорректно и edit_message_text
-    # не выполняется. get_running_loop() всегда возвращает текущий активный loop.
     loop = asyncio.get_running_loop()
     task = loop.create_task(_activity_timeout(duel_id))
 
@@ -289,7 +291,7 @@ async def _activity_timeout(duel_id: str):
     emoji    = GAME_EMOJI[duel['game_type']]
     empty_kb = InlineKeyboardMarkup(inline_keyboard=[])
 
-    # Случай 1: кто-то вообще не бросал → возврат ставок + личка
+    # Случай 1: кто-то вообще не бросал → возврат ставок без записи в лидеры
     if not p1s or not p2s:
         duel['status'] = 'cancelled'
         _storage.add_balance(p1, amount)
@@ -322,7 +324,7 @@ async def _activity_timeout(duel_id: str):
         logging.info(f"[Duels] {duel_id} таймаут — один не бросал, ставки возвращены.")
         return
 
-    # Случай 2: оба бросали → победитель по очкам, результат в чат как обычный финал
+    # Случай 2: оба бросали → победитель по очкам + запись в лидеры
     duel['status'] = 'finished'
     p1sum  = sum(p1s)
     p2sum  = sum(p2s)
@@ -332,6 +334,9 @@ async def _activity_timeout(duel_id: str):
     if p1sum > p2sum:
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
+        # ── запись в лидеры ──
+        _record_game_result(p1, p1t, amount, prize)
+        _record_game_result(p2, p2t, amount, 0.0)
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
@@ -345,6 +350,9 @@ async def _activity_timeout(duel_id: str):
     elif p2sum > p1sum:
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
+        # ── запись в лидеры ──
+        _record_game_result(p1, p1t, amount, 0.0)
+        _record_game_result(p2, p2t, amount, prize)
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
@@ -359,6 +367,9 @@ async def _activity_timeout(duel_id: str):
         refund = round(amount * (1 - COMMISSION), 8)
         _storage.add_balance(p1, refund)
         _storage.add_balance(p2, refund)
+        # ── запись в лидеры ──
+        _record_game_result(p1, p1t, amount, refund)
+        _record_game_result(p2, p2t, amount, refund)
         result_msg = (
             f"🤝<b>Ничья!</b>\n\n"
             f"<blockquote>"
@@ -556,7 +567,6 @@ async def handle_dice_throw(message: Message) -> None:
     scores.append(message.dice.value)
 
     # Повторная проверка после записи — защита от race condition
-    # (два одновременных броска могли оба пройти проверку выше)
     if len(scores) > n:
         scores.pop()
         return
@@ -592,10 +602,8 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         return
 
     # Атомарная смена статуса — защита от двойного вызова финала
-    # (оба игрока делают последний бросок почти одновременно)
     duel['status'] = 'finishing'
 
-    # Повторная проверка после смены — если кто-то успел раньше, выходим
     if duel.get('_finishing_lock'):
         duel['status'] = 'finished'
         return
@@ -621,6 +629,9 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     if p1sum > p2sum:
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
+        # ── запись в лидеры ──
+        _record_game_result(p1, p1t, amount, prize)
+        _record_game_result(p2, p2t, amount, 0.0)
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
@@ -635,6 +646,9 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     elif p2sum > p1sum:
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
+        # ── запись в лидеры ──
+        _record_game_result(p1, p1t, amount, 0.0)
+        _record_game_result(p2, p2t, amount, prize)
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
             f"<blockquote>"
@@ -650,6 +664,9 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         refund = round(amount * (1 - COMMISSION), 8)
         _storage.add_balance(p1, refund)
         _storage.add_balance(p2, refund)
+        # ── запись в лидеры ──
+        _record_game_result(p1, p1t, amount, refund)
+        _record_game_result(p2, p2t, amount, refund)
         result_msg = (
             f"🤝<b>Ничья!</b>\n\n"
             f"<blockquote>"
