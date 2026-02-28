@@ -438,8 +438,7 @@ async def handle_duel_command(message: Message) -> None:
 
     if game_type == 'error_throws':
         await message.reply(
-            f"❌ <b>Максимальное количество бросков: {MAX_THROWS}!</b>\n"
-            f"<blockquote>Вы указали <code>{throws}</code>. Допустимо: от 1 до {MAX_THROWS}.</blockquote>",
+            f"<blockquote>❌<b>Максимальное количество бросков:{MAX_THROWS}!</b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -450,21 +449,21 @@ async def handle_duel_command(message: Message) -> None:
     import math
     if not math.isfinite(amount) or amount <= 0:
         await message.reply(
-            "❌ <b>Некорректная сумма ставки.</b>",
+            "<blockquote>❌<b>Некорректная сумма ставки!</b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
 
     if amount < MIN_BET:
         await message.reply(
-            f"❌ <b>Минимальная ставка: <code>{MIN_BET}</code>💰</b>",
+            f"<blockquote>❌<b>Минимальная ставка: <code>{MIN_BET}</code></b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
 
     if amount > MAX_BET:
         await message.reply(
-            f"❌ <b>Максимальная ставка: <code>{MAX_BET:,.0f}</code>💰</b>",
+            f"<blockquote>❌<b>Максимальная ставка: <code>{MAX_BET:,.0f}</code></b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -472,11 +471,7 @@ async def handle_duel_command(message: Message) -> None:
     balance = _storage.get_balance(user_id)
     if balance < amount:
         await message.reply(
-            f"❌ <b>Недостаточно средств!</b>\n"
-            f"<blockquote>"
-            f"💰 Баланс: <code>{balance:.2f}</code>💰\n"
-            f"🎯 Ставка: <code>{amount:.2f}</code>💰"
-            f"</blockquote>",
+            f"<blockquote>❌<b>Недостаточно средств!</b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -502,7 +497,7 @@ async def handle_duel_command(message: Message) -> None:
     }
     _duels[duel_id] = duel
 
-    text = _duel_card_text(duel, extra="⏳ <i>Ожидаем второго игрока...</i>")
+    text = _duel_card_text(duel, extra='<tg-emoji emoji-id="5386367538735104399">👤</tg-emoji><i>Ожидаем второго игрока...</i>')
     sent = await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=_join_kb(duel_id))
     duel['message_id'] = sent.message_id
     _msg_to_duel[sent.message_id] = duel_id
@@ -517,10 +512,10 @@ async def cb_duel_join(callback: CallbackQuery) -> None:
     duel    = _duels.get(duel_id)
 
     if not duel:
-        await callback.answer("❌ Дуэль не найдена.", show_alert=True)
+        await callback.answer("❌ Дуэль не найдена!", show_alert=True)
         return
     if duel['status'] not in ('waiting',):
-        await callback.answer("❌ Дуэль уже началась или завершена.", show_alert=True)
+        await callback.answer("❌ Дуэль уже началась или завершена!", show_alert=True)
         return
     if callback.from_user.id == duel['player1']:
         await callback.answer("❌ Нельзя принять собственную дуэль!", show_alert=True)
@@ -535,7 +530,7 @@ async def cb_duel_join(callback: CallbackQuery) -> None:
     if balance < amount:
         duel['status'] = 'waiting'
         await callback.answer(
-            f"❌ Недостаточно средств!\nНужно: {amount:.2f}💰  Баланс: {balance:.2f}💰",
+            f"❌ Недостаточно средств!",
             show_alert=True
         )
         return
@@ -712,28 +707,28 @@ async def handle_mygames(message: Message) -> None:
 
     if not active:
         await message.reply(
-            "📋 <b>У вас нет активных дуэлей.</b>",
+            '<tg-emoji emoji-id="5444856076954520455">👤</tg-emoji> <b>У вас нет активных дуэлей.</b>',
             parse_mode=ParseMode.HTML
         )
         return
 
-    lines = ["📋 <b>Ваши активные дуэли:</b>\n"]
+    lines = ['<tg-emoji emoji-id="5444856076954520455">👤</tg-emoji> <b>Ваши активные дуэли:</b>\n']
     for did, d in active:
         e    = GAME_EMOJI[d['game_type']]
         name = GAME_NAMES[d['game_type']]
         n    = d['throws']
         amt  = d['amount']
         p2t  = d['player2_tag'] or "???"
-        st   = "⏳ ждёт игрока" if d['status'] == 'waiting' else "⚔️ идёт"
+        st   = '<tg-emoji emoji-id="5303214794336125778">👤</tg-emoji> ждёт игрока" if d['status'] == 'waiting' else "⚔️ идёт'
 
         if d['status'] == 'playing':
             p1d = len(d['player1_scores'])
             p2d = len(d['player2_scores'])
-            sc  = f"📊 {d['player1_tag']} {p1d}/{n}  —  {p2t} {p2d}/{n}"
+            sc  = f'<tg-emoji emoji-id="5386367538735104399">👤</tg-emoji> {d['player1_tag']} {p1d}/{n}  —  {p2t} {p2d}/{n}'
         else:
-            sc = f"🎯 vs {p2t}"
+            sc = f" vs {p2t}"
 
-        lines.append(f"{e} <b>{name}</b> x{n}  💰<code>{amt:.2f}</code>  [{st}]\n{sc}\n")
+        lines.append(f"{e} <b>{name}</b> x{n}  <code>{amt:.2f}</code>  [{st}]\n{sc}\n")
 
     await message.reply("\n".join(lines), parse_mode=ParseMode.HTML)
 
@@ -748,8 +743,7 @@ async def handle_del(message: Message) -> None:
 
     if not waiting:
         await message.reply(
-            "📋 <b>Нет дуэлей без соперника для удаления.</b>\n"
-            "<blockquote><i>Удаляются только дуэли, которые ещё никто не принял.</i></blockquote>",
+            '<tg-emoji emoji-id="5444856076954520455">👤</tg-emoji> <b>Нет дуэлей без соперника для удаления!</b>',
             parse_mode=ParseMode.HTML
         )
         return
@@ -762,7 +756,7 @@ async def handle_del(message: Message) -> None:
         total += d['amount']
         try:
             await _bot.edit_message_text(
-                "❌ <b>Дуэль отменена</b>\n\n"
+                "❌<b>Дуэль отменена</b>\n\n"
                 "<blockquote>Создатель отменил все свои дуэли (/del).</blockquote>",
                 chat_id=d['chat_id'],
                 message_id=d['message_id'],
@@ -774,8 +768,7 @@ async def handle_del(message: Message) -> None:
 
     count = len(waiting)
     await message.reply(
-        f"✅ <b>Отменено дуэлей: {count}</b>\n"
-        f"<blockquote>💰 Возвращено: <code>{total:.2f}</code>💰</blockquote>",
+        f"✅<b>Отменено дуэлей: {count}</b>\n",
         parse_mode=ParseMode.HTML
     )
     logging.info(f"[Duels] Игрок {user_id} удалил {count} дуэль(-ей), возврат {total}")
