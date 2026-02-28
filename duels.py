@@ -26,7 +26,7 @@ duels.py — Модуль дуэлей для Telegram-казино.
   6. Ожидание игрока 2: таймаута нет (дуэль ждёт вечно).
   7. Победитель получает 95% банка.
   8. При ничьей — каждый получает обратно 95% своей ставки (5% комиссия).
-  9. Вместо имён используются @username (если есть).
+  9. Отображается first_name [+ last_name] (не @username).
 
 Команды управления:
   /mygames | /myg | /моиигры  — список ваших активных дуэлей
@@ -35,6 +35,7 @@ duels.py — Модуль дуэлей для Telegram-казино.
 
 import asyncio
 import logging
+import math
 import re
 import time
 from datetime import datetime
@@ -88,6 +89,7 @@ _duel_counter: int = 0
 COMMISSION       = 0.05   # 5% с банка победителю не уходит / при ничьей с каждого
 MAX_THROWS       = 5
 MIN_BET          = 0.3
+MAX_BET          = 10000.0
 ACTIVITY_TIMEOUT = 300    # секунд без броска → отмена
 
 GAME_EMOJI: dict[str, str] = {
@@ -149,10 +151,18 @@ def _sanitize(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _fmt_user(first_name: str, username: str | None) -> str:
+def _fmt_user(first_name: str, username: str | None, last_name: str = "") -> str:
+    """
+    Приоритет отображения: first_name [+ last_name] → username → "Игрок"
+    """
+    nickname = (first_name or "").strip()
+    if last_name:
+        nickname = f"{nickname} {last_name}".strip()
+    if nickname:
+        return _sanitize(nickname)
     if username:
-        return f"@{_sanitize(username)}"
-    return _sanitize(first_name) if first_name else "Игрок"
+        return _sanitize(username)
+    return "Игрок"
 
 
 def parse_duel_command(text: str):
@@ -201,18 +211,9 @@ async def _record_duel_result(
     p1_win: float, p2_win: float,
     game_type: str,
 ):
-    """
-    Записывает итог дуэли сразу в:
-      - leaders.py (record_game_result) — агрегированная статистика лидерборда
-      - database.py (save_game_result)  — подробная история игр
-    """
     game_name = f"duel_{game_type}"
-
-    # Лидерборд (синхронно)
     _record_game_result(p1, p1t, amount, p1_win)
     _record_game_result(p2, p2t, amount, p2_win)
-
-    # История игр в game_results (асинхронно)
     await _db_save_game_result(p1, game_name, p1_win)
     await _db_save_game_result(p2, game_name, p2_win)
 
@@ -325,7 +326,7 @@ async def _activity_timeout(duel_id: str):
     prize    = round(bank * (1 - COMMISSION), 8)
     empty_kb = InlineKeyboardMarkup(inline_keyboard=[])
 
-    # Случай 1: кто-то вообще не бросал → возврат ставок, без записи в статистику
+    # Случай 1: кто-то вообще не бросал → возврат ставок
     if not p1s or not p2s:
         duel['status'] = 'cancelled'
         _storage.add_balance(p1, amount)
@@ -358,7 +359,7 @@ async def _activity_timeout(duel_id: str):
         logging.info(f"[Duels] {duel_id} таймаут — один не бросал, ставки возвращены.")
         return
 
-    # Случай 2: оба бросали → победитель по очкам + запись в статистику
+    # Случай 2: оба бросали → победитель по очкам
     duel['status'] = 'finished'
     p1sum  = sum(p1s)
     p2sum  = sum(p2s)
@@ -368,7 +369,6 @@ async def _activity_timeout(duel_id: str):
     if p1sum > p2sum:
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
-        # ── запись в лидеры + database ──
         await _record_duel_result(p1, p1t, p2, p2t, amount, prize, 0.0, duel['game_type'])
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
@@ -383,7 +383,6 @@ async def _activity_timeout(duel_id: str):
     elif p2sum > p1sum:
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
-        # ── запись в лидеры + database ──
         await _record_duel_result(p1, p1t, p2, p2t, amount, 0.0, prize, duel['game_type'])
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
@@ -399,7 +398,6 @@ async def _activity_timeout(duel_id: str):
         refund = round(amount * (1 - COMMISSION), 8)
         _storage.add_balance(p1, refund)
         _storage.add_balance(p2, refund)
-        # ── запись в лидеры + database ──
         await _record_duel_result(p1, p1t, p2, p2t, amount, refund, refund, duel['game_type'])
         result_msg = (
             f"🤝<b>Ничья!</b>\n\n"
@@ -438,15 +436,13 @@ async def handle_duel_command(message: Message) -> None:
 
     if game_type == 'error_throws':
         await message.reply(
-            f"<blockquote>❌<b>Максимальное количество бросков:{MAX_THROWS}!</b></blockquote>",
+            f"<blockquote>❌<b>Максимальное количество бросков: {MAX_THROWS}!</b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
 
     user_id = message.from_user.id
 
-    MAX_BET = 10000.0
-    import math
     if not math.isfinite(amount) or amount <= 0:
         await message.reply(
             "<blockquote>❌<b>Некорректная сумма ставки!</b></blockquote>",
@@ -463,7 +459,7 @@ async def handle_duel_command(message: Message) -> None:
 
     if amount > MAX_BET:
         await message.reply(
-            f"<blockquote>❌<b>Максимальная ставка: <code>{MAX_BET:,.0f}</code></b></blockquote>",
+            f"<blockquote>❌<b>Максимальная ставка: <code>{int(MAX_BET):,}</code></b></blockquote>",
             parse_mode=ParseMode.HTML
         )
         return
@@ -478,7 +474,11 @@ async def handle_duel_command(message: Message) -> None:
 
     _storage.add_balance(user_id, -amount)
 
-    tag1    = _fmt_user(message.from_user.first_name, message.from_user.username)
+    tag1    = _fmt_user(
+        message.from_user.first_name,
+        message.from_user.username,
+        getattr(message.from_user, 'last_name', '') or ''
+    )
     duel_id = _new_duel_id()
     duel = {
         'game_type':      game_type,
@@ -508,7 +508,18 @@ async def handle_duel_command(message: Message) -> None:
 # ─── CALLBACK: принять дуэль ──────────────────────────────────────────────────
 @duels_router.callback_query(F.data.startswith("duel_join:"))
 async def cb_duel_join(callback: CallbackQuery) -> None:
-    duel_id = callback.data.split(":", 1)[1]
+    # ── Валидация duel_id ──────────────────────────────────────────
+    raw     = callback.data.split(":", 1)
+    if len(raw) != 2:
+        await callback.answer("❌ Некорректные данные!", show_alert=True)
+        return
+    duel_id = raw[1]
+
+    # Разрешаем только безопасные символы в duel_id
+    if not re.match(r'^dl\d+_\d+$', duel_id):
+        await callback.answer("❌ Некорректные данные!", show_alert=True)
+        return
+
     duel    = _duels.get(duel_id)
 
     if not duel:
@@ -538,7 +549,11 @@ async def cb_duel_join(callback: CallbackQuery) -> None:
     _storage.add_balance(user_id, -amount)
 
     duel['player2']     = user_id
-    duel['player2_tag'] = _fmt_user(callback.from_user.first_name, callback.from_user.username)
+    duel['player2_tag'] = _fmt_user(
+        callback.from_user.first_name,
+        callback.from_user.username,
+        getattr(callback.from_user, 'last_name', '') or ''
+    )
     duel['status']      = 'playing'
 
     text = _duel_card_text(duel)
@@ -640,7 +655,6 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     if p1sum > p2sum:
         winner_id, winner_tag, loser_tag = p1, p1t, p2t
         _storage.add_balance(winner_id, prize)
-        # ── запись в лидеры + database ──
         await _record_duel_result(p1, p1t, p2, p2t, amount, prize, 0.0, duel['game_type'])
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
@@ -656,7 +670,6 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
     elif p2sum > p1sum:
         winner_id, winner_tag, loser_tag = p2, p2t, p1t
         _storage.add_balance(winner_id, prize)
-        # ── запись в лидеры + database ──
         await _record_duel_result(p1, p1t, p2, p2t, amount, 0.0, prize, duel['game_type'])
         result_msg = (
             f'<tg-emoji emoji-id="5461151367559141950">👤</tg-emoji> <b>Победитель: {winner_tag}!</b>\n\n'
@@ -673,7 +686,6 @@ async def _finish_duel(duel_id: str, trigger_msg: Message) -> None:
         refund = round(amount * (1 - COMMISSION), 8)
         _storage.add_balance(p1, refund)
         _storage.add_balance(p2, refund)
-        # ── запись в лидеры + database ──
         await _record_duel_result(p1, p1t, p2, p2t, amount, refund, refund, duel['game_type'])
         result_msg = (
             f"🤝<b>Ничья!</b>\n\n"
