@@ -239,8 +239,8 @@ def get_games_menu():
             InlineKeyboardButton(text="🎳 Боулинг", callback_data=GAME_CALLBACKS['bowling'])
         ],
         [
-            InlineKeyboardButton(text="💣 Мины",   callback_data="mines_menu"),
-            InlineKeyboardButton(text="🏰 Башня",  callback_data="tower_menu")
+            InlineKeyboardButton(text="💣 Мины",  callback_data="mines_menu"),
+            InlineKeyboardButton(text="🏰 Башня", callback_data="tower_menu")
         ],
         [
             InlineKeyboardButton(text="⛏ Золото", callback_data="gold_menu")
@@ -381,10 +381,7 @@ async def cmd_add_balance(message: Message):
         return
     parts = message.text.split()
     if len(parts) != 3:
-        await message.answer(
-            "<b>⚙️ Использование:</b>\n<code>/add [user_id] [сумма]</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await message.answer("<b>⚙️ Использование:</b>\n<code>/add [user_id] [сумма]</code>", parse_mode=ParseMode.HTML)
         return
     try:
         target_id = int(parts[1])
@@ -405,7 +402,6 @@ async def cmd_add_balance(message: Message):
         f"💰 Новый баланс: <code>{new_balance:.2f}</code></blockquote>",
         parse_mode=ParseMode.HTML
     )
-    logging.info(f"Админ {message.from_user.id} выдал {amount} пользователю {target_id}")
 
 
 @router.message(F.text.startswith("/addpromo"))
@@ -415,10 +411,7 @@ async def cmd_add_promo(message: Message):
         return
     parts = message.text.split()
     if len(parts) != 4:
-        await message.answer(
-            f'<b>Использование:</b> <code>/addpromo [код] [сумма] [активации]</code>',
-            parse_mode=ParseMode.HTML
-        )
+        await message.answer(f'<b>Использование:</b> <code>/addpromo [код] [сумма] [активации]</code>', parse_mode=ParseMode.HTML)
         return
     code = parts[1].upper().strip()
     try:
@@ -441,7 +434,6 @@ async def cmd_add_promo(message: Message):
         f'Активаций: <b><code>{activations}</code></b></blockquote>',
         parse_mode=ParseMode.HTML
     )
-    logging.info(f"Админ {message.from_user.id} создал промокод {code} на {amount} ({activations} активаций)")
 
 
 # ========== CALLBACK: ПРОМОКОДЫ ==========
@@ -453,10 +445,8 @@ async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.message.edit_text(
         f'<tg-emoji emoji-id="{EMOJI_PROMO}">💣</tg-emoji> <b>Промокоды</b>\n\n'
-        f'<blockquote>'
-        f'Активируй промокод и получи бонус на баланс.\n\n'
-        f'Промокоды публикуются в нашем <a href="{LINK_CHAT}">чате</a> и <a href="{LINK_NEWS}">канале</a>.'
-        f'</blockquote>\n\n{links_line()}',
+        f'<blockquote>Активируй промокод и получи бонус на баланс.\n\n'
+        f'Промокоды публикуются в нашем <a href="{LINK_CHAT}">чате</a> и <a href="{LINK_NEWS}">канале</a>.</blockquote>\n\n{links_line()}',
         parse_mode=ParseMode.HTML, reply_markup=get_promo_menu(), disable_web_page_preview=True
     )
     _set_msg_owner(callback.message.message_id, callback.from_user.id)
@@ -527,13 +517,14 @@ async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await show_tower_menu(callback, storage, betting_game)
 
+# ── ИСПРАВЛЕНО: передаём state в show_gold_menu ──────────────────────────────
 @router.callback_query(F.data == "gold_menu")
 async def gold_menu_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
         await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
         return
     await state.clear()
-    await show_gold_menu(callback, storage)
+    await show_gold_menu(callback, storage, state)   # <-- state передаётся!
 
 @router.callback_query(F.data == GAME_CALLBACKS['dice'])
 async def dice_menu(callback: CallbackQuery, state: FSMContext):
@@ -623,13 +614,11 @@ async def handle_transfer(message: Message, state: FSMContext):
             parse_mode=ParseMode.HTML
         )
         return
-
     target = message.reply_to_message.from_user
     if target.id == message.from_user.id:
         await message.reply("<blockquote>❌<b>Нельзя переводить самому себе!</b></blockquote>", parse_mode=ParseMode.HTML); return
     if target.is_bot:
         await message.reply("<blockquote>❌<b>Нельзя переводить ботам!</b></blockquote>", parse_mode=ParseMode.HTML); return
-
     match = TRANSFER_PATTERN.match(message.text.strip())
     if not match:
         return
@@ -637,33 +626,26 @@ async def handle_transfer(message: Message, state: FSMContext):
         amount = float(match.group(1).replace(',', '.'))
     except ValueError:
         await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML); return
-
     if amount < MIN_TRANSFER:
         await message.reply(f"<blockquote>❌<b>Мин. сумма перевода: <code>{MIN_TRANSFER}</code>💰</b></blockquote>", parse_mode=ParseMode.HTML); return
     if amount > MAX_TRANSFER:
         await message.reply(f"<blockquote>❌<b>Макс. сумма перевода: <code>{MAX_TRANSFER:,.0f}</code>💰</b></blockquote>", parse_mode=ParseMode.HTML); return
-
     if storage.get_balance(message.from_user.id) < amount:
         await message.reply("<blockquote>❌<b>Недостаточно средств!</b></blockquote>", parse_mode=ParseMode.HTML); return
-
     lock = _get_transfer_lock(message.from_user.id)
     if lock.locked():
         await message.reply("<blockquote>⏳<b>Перевод уже обрабатывается.</b></blockquote>", parse_mode=ParseMode.HTML); return
-
     async with lock:
         if storage.get_balance(message.from_user.id) < amount:
             await message.reply("<blockquote>❌<b>Недостаточно средств!</b></blockquote>", parse_mode=ParseMode.HTML); return
         storage.get_user(target.id)
         storage.add_balance(message.from_user.id, -amount)
         storage.add_balance(target.id, amount)
-
     await message.reply(
         f"💰 <b>Перевод выполнен!</b>\n\n<blockquote>"
-        f"Вы отправили <code>{amount:,.2f}</code>💰 игроку <b>{target.first_name or 'Игрок'}</b>"
-        f"</blockquote>",
+        f"Вы отправили <code>{amount:,.2f}</code>💰 игроку <b>{target.first_name or 'Игрок'}</b></blockquote>",
         parse_mode=ParseMode.HTML
     )
-    logging.info(f"Перевод: {message.from_user.id} → {target.id} | сумма: {amount}")
 
 
 # ========== СПЕЦИФИЧНЫЕ ТЕКСТОВЫЕ КОМАНДЫ ==========
@@ -720,12 +702,10 @@ async def handle_text_message(message: Message, state: FSMContext):
         )
         return
 
-    # /mygames
     if is_mygames_command(message.text):
         await handle_mygames(message)
         return
 
-    # /del
     if is_del_command(message.text):
         await handle_del(message)
         return
@@ -777,7 +757,7 @@ async def handle_text_message(message: Message, state: FSMContext):
         await process_tower_bet(message, state, storage)
         return
 
-    # Золото
+    # ── ЗОЛОТО: перехватываем ввод ставки ────────────────────────────────────
     if current_state == GoldGame.choosing_bet.state:
         await process_gold_bet(message, state, storage)
         return
