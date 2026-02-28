@@ -48,6 +48,16 @@ from duels import (
 )
 import duels as _duels_module
 
+# ── Бонусная система ──────────────────────────────────────────────────────────
+from bonus import (
+    bonus_router,
+    setup_bonus,
+    start_bonus_watchdog,
+    is_bonus_command,
+    handle_bonus,
+)
+import bonus as _bonus_module
+
 try:
     from database import init_db, import_users_from_json
 except ImportError:
@@ -80,7 +90,8 @@ EMOJI_CHANNEL    = "5424818078833715060"
 EMOJI_CHAT       = "5443038326535759644"
 EMOJI_SUPORT     = "5907025791006283345"
 EMOJI_PEREXOD    = "5906839307821259375"
-EMOJI_GOLD = "5278467510604160626"
+EMOJI_GOLD       = "5278467510604160626"
+EMOJI_BONUS      = "5443127283898405358"
 
 GAME_CALLBACKS = {
     'dice':         'custom_dice_001',
@@ -218,8 +229,11 @@ def get_main_menu():
             InlineKeyboardButton(text="Лидеры", callback_data="leaders", icon_custom_emoji_id=EMOJI_LEADERS)
         ],
         [
-            InlineKeyboardButton(text="Промокоды", callback_data="promo_menu", icon_custom_emoji_id=EMOJI_PROMO),
-            InlineKeyboardButton(text="О проекте", callback_data="about",      icon_custom_emoji_id=EMOJI_ABOUT)
+            InlineKeyboardButton(text="Промокоды", callback_data="promo_menu",  icon_custom_emoji_id=EMOJI_PROMO),
+            InlineKeyboardButton(text="О проекте", callback_data="about",       icon_custom_emoji_id=EMOJI_ABOUT)
+        ],
+        [
+            InlineKeyboardButton(text="Бонус", callback_data="bonus_menu", icon_custom_emoji_id=EMOJI_BONUS)
         ],
         [
             InlineKeyboardButton(text="Инструкция", url=LINK_INSTRUCT, icon_custom_emoji_id=EMOJI_INSTRUCT)
@@ -467,6 +481,19 @@ async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ========== CALLBACK: БОНУС ==========
+@router.callback_query(F.data == "bonus_menu")
+async def bonus_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
+    await state.clear()
+    # Создаём фиктивное сообщение-обёртку: передаём callback.message как Message
+    # handle_bonus работает с Message, поэтому вызываем через answer
+    await callback.answer()
+    await handle_bonus(callback.message, from_callback=True)
+
+
 # ========== CALLBACK: ПРОФИЛЬ ==========
 @router.callback_query(F.data == "profile")
 async def profile_callback(callback: CallbackQuery, state: FSMContext):
@@ -518,14 +545,13 @@ async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await show_tower_menu(callback, storage, betting_game)
 
-# ── ИСПРАВЛЕНО: передаём state в show_gold_menu ──────────────────────────────
 @router.callback_query(F.data == "gold_menu")
 async def gold_menu_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
         await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
         return
     await state.clear()
-    await show_gold_menu(callback, storage, state)   # <-- state передаётся!
+    await show_gold_menu(callback, storage, state)
 
 @router.callback_query(F.data == GAME_CALLBACKS['dice'])
 async def dice_menu(callback: CallbackQuery, state: FSMContext):
@@ -703,6 +729,11 @@ async def handle_text_message(message: Message, state: FSMContext):
         )
         return
 
+    # Бонус (текстовая команда без слеша)
+    if is_bonus_command(message.text):
+        await handle_bonus(message)
+        return
+
     if is_mygames_command(message.text):
         await handle_mygames(message)
         return
@@ -758,7 +789,7 @@ async def handle_text_message(message: Message, state: FSMContext):
         await process_tower_bet(message, state, storage)
         return
 
-    # ── ЗОЛОТО: перехватываем ввод ставки ────────────────────────────────────
+    # Золото
     if current_state == GoldGame.choosing_bet.state:
         await process_gold_bet(message, state, storage)
         return
@@ -847,6 +878,7 @@ async def main():
 
     betting_game = BettingGame(bot)
 
+    # ── Подключаем роутеры ────────────────────────────────────────
     # ВАЖНО: duels_router первым — F.dice перехватывается раньше всех
     dp.include_router(duels_router)
     dp.include_router(router)
@@ -856,11 +888,17 @@ async def main():
     dp.include_router(referral_router)
     dp.include_router(payment_router)
     dp.include_router(leaders_router)
+    dp.include_router(bonus_router)
 
+    # ── Инициализация модулей ─────────────────────────────────────
     setup_payments(bot)
     setup_referrals(bot)
     setup_duels(bot, storage)
+    setup_bonus(bot)           # ← бонус: передаём бота
     _inject_leaders_owner_fns()
+
+    # ── Фоновый воркер бонуса (проверка приписки каждые 2ч) ──────
+    asyncio.create_task(start_bonus_watchdog())
 
     await bot.delete_webhook(drop_pending_updates=True)
     logging.info("Бот запущен в режиме поллинга")
