@@ -365,7 +365,7 @@ async def show_gold_menu(callback: CallbackQuery, storage, state: FSMContext = N
     balance = storage.get_balance(user_id)
     text = (
         f'<blockquote><b><tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji> Золото</b></blockquote>\n\n'
-        f'<blockquote><tg-emoji emoji-id="{EMOJI_INPUT}">✏️</tg-emoji> <b>Введите сумму ставки:</b><blockquote>'
+        f'<blockquote><tg-emoji emoji-id="{EMOJI_INPUT}">✏️</tg-emoji> <b>Введите сумму ставки:</b></blockquote>'
     )
     await callback.message.edit_text(
         text,
