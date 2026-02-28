@@ -39,7 +39,7 @@ try:
 except ImportError:
     def record_game_result(user_id, name, bet, win): pass
 
-# ─── кастомные эмодзи (только проверенные айди из tower.py) ──────────────────
+# ─── кастомные эмодзи ─────────────────────────────────────────────────────────
 EMOJI_BACK    = "5906771962734057347"
 EMOJI_GOAL    = "5206607081334906820"
 EMOJI_3POINT  = "5397782960512444700"
@@ -66,8 +66,8 @@ CELL_FUTURE   = "🌑"
 
 # ─── конфигурация ─────────────────────────────────────────────────────────────
 FLOORS             = 7
-CELLS              = 2      
-BOMB_CHANCE        = 0.60 
+CELLS              = 2
+BOMB_CHANCE        = 0.60
 INACTIVITY_TIMEOUT = 300
 
 # Множители за каждый пройденный уровень [1й..7й]
@@ -87,11 +87,27 @@ _user_locks:       dict = {}
 _bet_locks:        dict = {}
 _game_board_owner: dict = {}
 
-# ─── owner-функции (инжектируются из main.py) ─────────────────────────────────
+# ─── owner-функции ────────────────────────────────────────────────────────────
 def _noop_set_owner(message_id: int, user_id: int): pass
 def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
 set_owner_fn = _noop_set_owner
 is_owner_fn  = _noop_is_owner
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Вспомогательная функция: получить отображаемое имя пользователя
+# ══════════════════════════════════════════════════════════════════
+
+def _get_display_name(from_user) -> str:
+    """
+    Приоритет: @username → first_name → "User {id}"
+    Аналогично логике в leaders.py для единообразия.
+    """
+    if from_user.username:
+        return f"@{from_user.username}"
+    if from_user.first_name:
+        return from_user.first_name
+    return f"User {from_user.id}"
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -212,9 +228,9 @@ def _create_session(bet: float, chat_id: int, owner_id: int = 0) -> dict:
     floors = []
     for _ in range(FLOORS):
         floors.append({
-            'bomb_col': None,   # какая ячейка оказалась бомбой (0 или 1)
-            'chosen':   None,   # какую нажал игрок
-            'is_bomb':  None,   # результат броска
+            'bomb_col': None,
+            'chosen':   None,
+            'is_bomb':  None,
         })
     return {
         'bet':              bet,
@@ -269,14 +285,12 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
         mult       = GOLD_MULTIPLIERS[floor_idx]
         btn_row    = []
 
-        # Левая ячейка — множитель (некликабельная)
         btn_row.append(InlineKeyboardButton(
             text=f"x{mult}",
             callback_data="gold_noop"
         ))
 
         if game_over:
-            # Раскрываем всё
             for col in range(CELLS):
                 if col == chosen and bomb_col == col:
                     text = CELL_EXPLODE
@@ -289,13 +303,11 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
                 btn_row.append(InlineKeyboardButton(text=text, callback_data="gold_noop"))
 
         elif floor_idx < current_floor:
-            # Пройденный этаж
             for col in range(CELLS):
                 text = CELL_GOLD if col == chosen else CELL_HIDDEN
                 btn_row.append(InlineKeyboardButton(text=text, callback_data="gold_noop"))
 
         elif floor_idx == current_floor:
-            # Активный этаж
             for col in range(CELLS):
                 btn_row.append(InlineKeyboardButton(
                     text=CELL_HIDDEN,
@@ -303,13 +315,11 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
                 ))
 
         else:
-            # Будущий этаж
             for col in range(CELLS):
                 btn_row.append(InlineKeyboardButton(text=CELL_FUTURE, callback_data="gold_noop"))
 
         rows.append(btn_row)
 
-    # Кнопки управления
     if not game_over:
         ctrl = []
         if floors_passed > 0:
@@ -344,15 +354,10 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Публичная функция входа — ИСПРАВЛЕНО: ставит FSM-состояние
+#  Публичная функция входа
 # ══════════════════════════════════════════════════════════════════
 
 async def show_gold_menu(callback: CallbackQuery, storage, state: FSMContext = None):
-    """
-    Показывает меню ввода ставки.
-    ВАЖНО: state передаётся из main.py чтобы установить GoldGame.choosing_bet —
-    без этого бот не перехватывает текстовый ввод суммы.
-    """
     user_id = callback.from_user.id
 
     if _has_active_game(user_id):
@@ -380,9 +385,6 @@ async def show_gold_menu(callback: CallbackQuery, storage, state: FSMContext = N
     )
     set_owner_fn(callback.message.message_id, user_id)
 
-    # ── КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ──────────────────────────────────────
-    # Устанавливаем FSM-состояние чтобы handle_text_message в main.py
-    # поймал следующее текстовое сообщение как ставку для золота.
     if state is not None:
         await state.set_state(GoldGame.choosing_bet)
 
@@ -461,7 +463,6 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
     floor_idx = int(parts[2])
     col       = int(parts[3])
 
-    # Защита: только владелец доски
     board_owner = _game_board_owner.get(msg_id)
     if board_owner is None or board_owner != caller_id:
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
@@ -512,16 +513,16 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
         floor_data = session['floors'][floor_idx]
         floor_data['chosen'] = col
 
-        # ── БРОСОК: 60% бомба, 40% золото для ЛЮБОЙ нажатой ячейки ──
         is_bomb = random.random() < BOMB_CHANCE
         floor_data['is_bomb'] = is_bomb
 
         if is_bomb:
-            # Нажатая ячейка — бомба, другая — золото
             floor_data['bomb_col'] = col
         else:
-            # Нажатая ячейка — золото, другая — бомба
             floor_data['bomb_col'] = 1 - col
+
+        # Имя для лидерборда (через @username в приоритете)
+        display_name = _get_display_name(callback.from_user)
 
         if is_bomb:
             # ══ ПРОИГРЫШ ══════════════════════════════════════════
@@ -542,8 +543,8 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
                 if session['floors'][fi]['bomb_col'] is None:
                     session['floors'][fi]['bomb_col'] = random.randint(0, 1)
 
-            name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
-            record_game_result(user_id, name, bet, 0.0)
+            # ── Запись в лидерборд (проигрыш: win=0) ─────────────
+            record_game_result(user_id, display_name, bet, 0.0)
             asyncio.create_task(db_save_game_result(user_id, 'gold', 0.0))
 
             balance = pay_storage.get_balance(user_id)
@@ -589,8 +590,8 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
                 _cancel_timeout(user_id)
                 await state.clear()
 
-                name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
-                record_game_result(user_id, name, bet, winnings)
+                # ── Запись в лидерборд (победа: win=winnings) ─────
+                record_game_result(user_id, display_name, bet, winnings)
                 asyncio.create_task(db_save_game_result(user_id, 'gold', winnings))
 
                 balance = pay_storage.get_balance(user_id)
@@ -679,8 +680,9 @@ async def gold_cashout(callback: CallbackQuery, state: FSMContext):
     _cancel_timeout(user_id)
     await state.clear()
 
-    name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
-    record_game_result(user_id, name, bet, winnings)
+    # ── Запись в лидерборд (кэшаут: win=winnings) ─────────────────
+    display_name = _get_display_name(callback.from_user)
+    record_game_result(user_id, display_name, bet, winnings)
     asyncio.create_task(db_save_game_result(user_id, 'gold', winnings))
 
     balance = pay_storage.get_balance(user_id)
@@ -745,11 +747,11 @@ async def gold_cashout_exit(callback: CallbackQuery, state: FSMContext):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Внутренняя функция запуска игры (общая для меню и команды)
+#  Внутренняя функция запуска игры
 # ══════════════════════════════════════════════════════════════════
 
 async def _start_game(
-    send_fn,           # coroutine-функция отправки сообщения: async (text, kb) -> Message
+    send_fn,
     user_id: int,
     bet: float,
     chat_id: int,
@@ -758,7 +760,6 @@ async def _start_game(
     state: FSMContext,
     from_user,
 ):
-    """Создаёт сессию, списывает ставку, отправляет игровое поле."""
     storage.deduct_balance(user_id, bet)
     asyncio.create_task(notify_referrer_commission(user_id, bet))
 
@@ -851,7 +852,6 @@ async def process_gold_bet(message: Message, state: FSMContext, storage):
 async def process_gold_command(message: Message, state: FSMContext, storage):
     """
     Обрабатывает: gold 100 | /gold 100 | золото 100 | /золото 100
-    Запускает игру напрямую без FSM-меню.
     """
     text  = message.text.strip()
     match = re.match(r'^(?:/)?(?:gold|золото)\s+([\d.,]+)$', text, re.IGNORECASE)
