@@ -2,15 +2,15 @@
 gold.py — Игра «Золото» для Telegram-казино.
 
 Механика:
-  - Несколько этажей (уровней), на каждом 3 ячейки:
-      [множитель этажа] [ячейка 1] [ячейка 2]
-  - 1 ячейка — золото (безопасная), 1 ячейка — бомба.
-  - 60% шанс что НАЖАТАЯ ячейка окажется бомбой.
-  - При успехе — переход на следующий этаж с накопленным множителем.
-  - Кэшаут в любой момент после прохождения хотя бы 1 этажа.
+  - 7 уровней. На каждом 3 ячейки: [множитель] [ячейка A] [ячейка B]
+  - При нажатии ЛЮБОЙ ячейки: 60% — бомба (проигрыш), 40% — золото (проход).
+  - Кэшаут в любой момент после прохождения хотя бы 1 уровня.
+  - Таймаут 5 минут бездействия — возврат ставки.
 
 Команды:
-  золото СУММА  |  gold СУММА  |  /золото СУММА  |  /gold СУММА
+  gold СУММА | /gold СУММА | золото СУММА | /золото СУММА
+Меню:
+  callback_data="gold_menu"
 """
 
 import random
@@ -25,10 +25,9 @@ from aiogram.enums import ParseMode
 
 # ─── внешние зависимости ──────────────────────────────────────────────────────
 try:
-    from database import save_game_result as db_save_game_result, update_balance as db_update_balance
+    from database import save_game_result as db_save_game_result
 except ImportError:
     async def db_save_game_result(user_id, game_name, score): pass
-    async def db_update_balance(user_id, amount): return None
 
 try:
     from referrals import notify_referrer_commission
@@ -40,7 +39,7 @@ try:
 except ImportError:
     def record_game_result(user_id, name, bet, win): pass
 
-# ─── кастомные эмодзи (только из tower.py — проверенные айди) ─────────────────
+# ─── кастомные эмодзи (только проверенные айди из tower.py) ──────────────────
 EMOJI_BACK    = "5906771962734057347"
 EMOJI_GOAL    = "5206607081334906820"
 EMOJI_3POINT  = "5397782960512444700"
@@ -58,20 +57,20 @@ EMOJI_TROPHY  = "5461151367559141950"
 EMOJI_MULT2   = "5429651785352501917"
 
 # ─── ячейки ───────────────────────────────────────────────────────────────────
-CELL_HIDDEN   = "🌑"   # ещё не нажата / заблокирована
-CELL_GOLD     = "💰"   # выбранная безопасная ячейка
-CELL_BOMB     = "💣"   # бомба (раскрывается после проигрыша)
-CELL_EXPLODE  = "💥"   # нажатая бомба
-CELL_SAFE_REV = "▪️"   # безопасная ячейка другого этажа (раскрытие)
-CELL_FUTURE   = "🌑"   # этаж ещё не достигнут
+CELL_HIDDEN   = "🌑"
+CELL_GOLD     = "💰"
+CELL_BOMB     = "💣"
+CELL_EXPLODE  = "💥"
+CELL_SAFE_REV = "▪️"
+CELL_FUTURE   = "🌑"
 
 # ─── конфигурация ─────────────────────────────────────────────────────────────
-FLOORS             = 7      # кол-во этажей
-CELLS              = 2      # кол-во кликабельных ячеек (1 золото, 1 бомба)
-BOMB_CHANCE        = 0.60   # 60% шанс что нажатая ячейка — бомба
-INACTIVITY_TIMEOUT = 300    # 5 минут бездействия → возврат ставки
+FLOORS             = 7
+CELLS              = 2      # кликабельных ячейки на этаж
+BOMB_CHANCE        = 0.60   # 60% бомба, 40% золото — для ЛЮБОЙ нажатой ячейки
+INACTIVITY_TIMEOUT = 300
 
-# Множители за каждый пройденный этаж [1й, 2й, ..., 7й]
+# Множители за каждый пройденный уровень [1й..7й]
 GOLD_MULTIPLIERS = [1.60, 2.56, 4.10, 6.55, 10.49, 16.78, 26.84]
 
 # ─── FSM ──────────────────────────────────────────────────────────────────────
@@ -82,13 +81,13 @@ class GoldGame(StatesGroup):
 gold_router = Router()
 
 # ─── хранилища ────────────────────────────────────────────────────────────────
-_sessions:        dict = {}   # user_id -> session
-_timeout_tasks:   dict = {}   # user_id -> asyncio.Task
-_user_locks:      dict = {}   # user_id -> asyncio.Lock
-_bet_locks:       dict = {}   # user_id -> asyncio.Lock
-_game_board_owner: dict = {}  # message_id -> owner_id
+_sessions:         dict = {}
+_timeout_tasks:    dict = {}
+_user_locks:       dict = {}
+_bet_locks:        dict = {}
+_game_board_owner: dict = {}
 
-# ─── владелец ─────────────────────────────────────────────────────────────────
+# ─── owner-функции (инжектируются из main.py) ─────────────────────────────────
 def _noop_set_owner(message_id: int, user_id: int): pass
 def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
 set_owner_fn = _noop_set_owner
@@ -157,7 +156,7 @@ async def _inactivity_watcher(user_id: int, bot: Bot, storage):
                 text=(
                     "<blockquote><b>⏰ Игра закрыта</b></blockquote>\n\n"
                     "<blockquote>"
-                    "⛏ Золото\n"
+                    f"⛏ Золото\n"
                     f'<tg-emoji emoji-id="{EMOJI_BET}">💰</tg-emoji>'
                     f"Ставка <code>{bet}</code>"
                     f'<tg-emoji emoji-id="{EMOJI_COIN}">💰</tg-emoji> возвращена\n'
@@ -202,7 +201,7 @@ def _active_game_error_text(session: dict) -> str:
         f"<blockquote>"
         f'<tg-emoji emoji-id="{EMOJI_BET}">💰</tg-emoji>Ставка: <code>{bet}</code>'
         f'<tg-emoji emoji-id="{EMOJI_COIN}">💰</tg-emoji>\n'
-        f'<tg-emoji emoji-id="{EMOJI_FLOOR}">🏗</tg-emoji>Пройдено этажей: <b>{floors_passed}/{FLOORS}</b> | '
+        f'<tg-emoji emoji-id="{EMOJI_FLOOR}">🏗</tg-emoji>Пройдено уровней: <b>{floors_passed}/{FLOORS}</b> | '
         f'<tg-emoji emoji-id="{EMOJI_MULT}">✨</tg-emoji><b>x{mult}</b>\n'
         f"</blockquote>\n\n"
         f"<blockquote><i>Завершите текущую игру прежде чем начать новую.</i></blockquote>"
@@ -213,9 +212,9 @@ def _create_session(bet: float, chat_id: int, owner_id: int = 0) -> dict:
     floors = []
     for _ in range(FLOORS):
         floors.append({
-            'bomb_col':  None,   # 0 или 1 — какая ячейка бомба (определяется при нажатии)
-            'chosen':    None,   # какую ячейку нажал игрок
-            'is_bomb':   None,   # результат нажатия
+            'bomb_col': None,   # какая ячейка оказалась бомбой (0 или 1)
+            'chosen':   None,   # какую нажал игрок
+            'is_bomb':  None,   # результат броска
         })
     return {
         'bet':              bet,
@@ -254,7 +253,7 @@ def game_text(session: dict) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Клавиатура
+#  Клавиатура игры
 # ══════════════════════════════════════════════════════════════════
 
 def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboardMarkup:
@@ -270,19 +269,18 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
         mult       = GOLD_MULTIPLIERS[floor_idx]
         btn_row    = []
 
-        # Левая ячейка — множитель этажа (некликабельная)
+        # Левая ячейка — множитель (некликабельная)
         btn_row.append(InlineKeyboardButton(
             text=f"x{mult}",
             callback_data="gold_noop"
         ))
 
         if game_over:
-            # Раскрываем все ячейки
+            # Раскрываем всё
             for col in range(CELLS):
-                is_bomb = (col == bomb_col)
-                if col == chosen and is_bomb:
+                if col == chosen and bomb_col == col:
                     text = CELL_EXPLODE
-                elif is_bomb and bomb_col is not None:
+                elif bomb_col == col and bomb_col is not None:
                     text = CELL_BOMB
                 elif col == chosen:
                     text = CELL_GOLD
@@ -291,16 +289,13 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
                 btn_row.append(InlineKeyboardButton(text=text, callback_data="gold_noop"))
 
         elif floor_idx < current_floor:
-            # Пройденный этаж — показываем результат
+            # Пройденный этаж
             for col in range(CELLS):
-                if col == chosen:
-                    text = CELL_GOLD
-                else:
-                    text = CELL_HIDDEN
+                text = CELL_GOLD if col == chosen else CELL_HIDDEN
                 btn_row.append(InlineKeyboardButton(text=text, callback_data="gold_noop"))
 
         elif floor_idx == current_floor:
-            # Текущий активный этаж
+            # Активный этаж
             for col in range(CELLS):
                 btn_row.append(InlineKeyboardButton(
                     text=CELL_HIDDEN,
@@ -308,7 +303,7 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
                 ))
 
         else:
-            # Этаж ещё не достигнут
+            # Будущий этаж
             for col in range(CELLS):
                 btn_row.append(InlineKeyboardButton(text=CELL_FUTURE, callback_data="gold_noop"))
 
@@ -348,21 +343,16 @@ def build_gold_keyboard(session: dict, game_over: bool = False) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def build_gold_menu_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(
-            text="Назад",
-            callback_data="games",
-            icon_custom_emoji_id=EMOJI_BACK
-        )]
-    ])
-
-
 # ══════════════════════════════════════════════════════════════════
-#  Публичная функция входа в меню
+#  Публичная функция входа — ИСПРАВЛЕНО: ставит FSM-состояние
 # ══════════════════════════════════════════════════════════════════
 
-async def show_gold_menu(callback: CallbackQuery, storage):
+async def show_gold_menu(callback: CallbackQuery, storage, state: FSMContext = None):
+    """
+    Показывает меню ввода ставки.
+    ВАЖНО: state передаётся из main.py чтобы установить GoldGame.choosing_bet —
+    без этого бот не перехватывает текстовый ввод суммы.
+    """
     user_id = callback.from_user.id
 
     if _has_active_game(user_id):
@@ -376,30 +366,43 @@ async def show_gold_menu(callback: CallbackQuery, storage):
     text = (
         f"<blockquote><b>⛏ Золото</b></blockquote>\n\n"
         f"<blockquote>"
-        f'<tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji>: '
+        f'<tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji> Баланс: '
         f"<code>{balance:.2f}</code>"
         f'<tg-emoji emoji-id="{EMOJI_COIN}">💰</tg-emoji>'
         f"</blockquote>\n\n"
         f"<blockquote>"
         f"<b>Правила:</b>\n"
         f"• {FLOORS} уровней, на каждом 2 ячейки\n"
-        f"• За одной — 💰 золото, за другой — 💣 бомба\n"
+        f"• Каждая ячейка: 60% 💣 бомба / 40% 💰 золото\n"
         f"• Пройди все уровни или забери выигрыш в любой момент\n"
-        f"• Множитель растёт с каждым этажом до <b>x{GOLD_MULTIPLIERS[-1]}</b>\n"
+        f"• Максимальный множитель: <b>x{GOLD_MULTIPLIERS[-1]}</b>\n"
         f"</blockquote>\n\n"
-        f'<tg-emoji emoji-id="{EMOJI_INPUT}">💬</tg-emoji><b>Введите сумму ставки:</b>'
+        f'<tg-emoji emoji-id="{EMOJI_INPUT}">✏️</tg-emoji> <b>Введите сумму ставки:</b>'
     )
     await callback.message.edit_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=build_gold_menu_keyboard()
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="Назад",
+                callback_data="games",
+                icon_custom_emoji_id=EMOJI_BACK
+            )
+        ]])
     )
     set_owner_fn(callback.message.message_id, user_id)
+
+    # ── КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ ──────────────────────────────────────
+    # Устанавливаем FSM-состояние чтобы handle_text_message в main.py
+    # поймал следующее текстовое сообщение как ставку для золота.
+    if state is not None:
+        await state.set_state(GoldGame.choosing_bet)
+
     await callback.answer()
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Хендлеры
+#  Хендлеры callback
 # ══════════════════════════════════════════════════════════════════
 
 @gold_router.callback_query(F.data == "gold_menu")
@@ -409,7 +412,7 @@ async def gold_menu_callback(callback: CallbackQuery, state: FSMContext):
         return
     from payments import storage as pay_storage
     await state.clear()
-    await show_gold_menu(callback, pay_storage)
+    await show_gold_menu(callback, pay_storage, state)
 
 
 @gold_router.callback_query(F.data == "gold_play_again")
@@ -424,7 +427,7 @@ async def gold_play_again(callback: CallbackQuery, state: FSMContext):
     _sessions.pop(caller_id, None)
     _cancel_timeout(caller_id)
     await state.clear()
-    await show_gold_menu(callback, pay_storage)
+    await show_gold_menu(callback, pay_storage, state)
 
 
 @gold_router.callback_query(F.data == "gold_exit")
@@ -482,15 +485,12 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
     if not session:
         await callback.answer("🚫 Игра не найдена!", show_alert=True)
         return
-
     if session.get('message_id') != msg_id:
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
-
     if session.get('finishing'):
         await callback.answer()
         return
-
     if floor_idx != session['current_floor']:
         await callback.answer()
         return
@@ -524,17 +524,16 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
         floor_data = session['floors'][floor_idx]
         floor_data['chosen'] = col
 
-        # ── Определяем исход: 60% шанс бомбы ──────────────────────
+        # ── БРОСОК: 60% бомба, 40% золото для ЛЮБОЙ нажатой ячейки ──
         is_bomb = random.random() < BOMB_CHANCE
         floor_data['is_bomb'] = is_bomb
 
         if is_bomb:
-            # Нажатая ячейка — бомба. Другая ячейка — золото.
+            # Нажатая ячейка — бомба, другая — золото
             floor_data['bomb_col'] = col
         else:
-            # Нажатая ячейка — золото. Другая — бомба.
-            other_col = 1 - col
-            floor_data['bomb_col'] = other_col
+            # Нажатая ячейка — золото, другая — бомба
+            floor_data['bomb_col'] = 1 - col
 
         if is_bomb:
             # ══ ПРОИГРЫШ ══════════════════════════════════════════
@@ -550,11 +549,10 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
             _cancel_timeout(user_id)
             await state.clear()
 
-            # Раскрываем бомбы на всех непройденных этажах выше
+            # Раскрываем бомбы на непройденных этажах выше
             for fi in range(floor_idx + 1, FLOORS):
                 if session['floors'][fi]['bomb_col'] is None:
                     session['floors'][fi]['bomb_col'] = random.randint(0, 1)
-                    session['floors'][fi]['chosen']   = None
 
             name = callback.from_user.first_name or callback.from_user.username or f"User {user_id}"
             record_game_result(user_id, name, bet, 0.0)
@@ -588,7 +586,7 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
             mult          = get_multiplier(floors_passed)
 
             if session['current_floor'] >= FLOORS:
-                # ── ВСЕ ЭТАЖИ ПРОЙДЕНЫ ────────────────────────────
+                # ── ВСЕ УРОВНИ ПРОЙДЕНЫ ───────────────────────────
                 bet = session['bet']
 
                 lock = _get_user_lock(user_id)
@@ -639,7 +637,7 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
                 await callback.answer("🏆 Победа!")
 
             else:
-                # ── Следующий этаж ────────────────────────────────
+                # ── Следующий уровень ─────────────────────────────
                 await callback.message.edit_text(
                     game_text(session),
                     parse_mode=ParseMode.HTML,
@@ -737,7 +735,7 @@ async def gold_cashout_again(callback: CallbackQuery, state: FSMContext):
         await callback.answer("🚫 Это не ваша игра!", show_alert=True)
         return
     await state.clear()
-    await show_gold_menu(callback, pay_storage)
+    await show_gold_menu(callback, pay_storage, state)
 
 
 @gold_router.callback_query(F.data == "gold_cashout_exit")
@@ -759,32 +757,65 @@ async def gold_cashout_exit(callback: CallbackQuery, state: FSMContext):
 
 
 # ══════════════════════════════════════════════════════════════════
+#  Внутренняя функция запуска игры (общая для меню и команды)
+# ══════════════════════════════════════════════════════════════════
+
+async def _start_game(
+    send_fn,           # coroutine-функция отправки сообщения: async (text, kb) -> Message
+    user_id: int,
+    bet: float,
+    chat_id: int,
+    bot: Bot,
+    storage,
+    state: FSMContext,
+    from_user,
+):
+    """Создаёт сессию, списывает ставку, отправляет игровое поле."""
+    storage.deduct_balance(user_id, bet)
+    asyncio.create_task(notify_referrer_commission(user_id, bet))
+
+    session = _create_session(bet, chat_id, user_id)
+    _sessions[user_id] = session
+    await state.set_state(GoldGame.playing)
+
+    sent = await send_fn(
+        game_text(session),
+        build_gold_keyboard(session)
+    )
+    session['message_id'] = sent.message_id
+    set_owner_fn(sent.message_id, user_id)
+    _game_board_owner[sent.message_id] = user_id
+    _start_timeout(user_id, bot, storage)
+
+
+# ══════════════════════════════════════════════════════════════════
 #  Обработка ставки через FSM (вызов из main.py)
 # ══════════════════════════════════════════════════════════════════
 
 async def process_gold_bet(message: Message, state: FSMContext, storage):
+    """Вызывается из main.py когда state == GoldGame.choosing_bet."""
     user_id = message.from_user.id
 
     if _has_active_game(user_id):
-        session = _sessions[user_id]
-        await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
+        await message.answer(_active_game_error_text(_sessions[user_id]), parse_mode=ParseMode.HTML)
         return
 
     bet_lock = _get_bet_lock(user_id)
     if bet_lock.locked():
-        logging.warning(f"[gold] Двойная ставка заблокирована: user_id={user_id}")
         return
 
     async with bet_lock:
         if _has_active_game(user_id):
-            session = _sessions[user_id]
-            await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
+            await message.answer(_active_game_error_text(_sessions[user_id]), parse_mode=ParseMode.HTML)
             return
 
         try:
             bet = float(message.text.replace(',', '.'))
         except ValueError:
-            await message.answer("Введите корректную сумму ставки.")
+            await message.answer(
+                f'<blockquote><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Введите корректную сумму.</blockquote>',
+                parse_mode=ParseMode.HTML
+            )
             return
 
         if bet < 0.1:
@@ -793,7 +824,6 @@ async def process_gold_bet(message: Message, state: FSMContext, storage):
                 parse_mode=ParseMode.HTML
             )
             return
-
         if bet > 10000:
             await message.answer(
                 f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Максимальная ставка: 10 000</b></blockquote>',
@@ -804,29 +834,26 @@ async def process_gold_bet(message: Message, state: FSMContext, storage):
         balance = storage.get_balance(user_id)
         if bet > balance:
             await message.answer(
-                f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n'
-                f'<blockquote><tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji>Баланс: <code>{balance:.2f}</code>'
+                f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Недостаточно средств!</b>\n'
+                f'<tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji>Баланс: <code>{balance:.2f}</code>'
                 f'<tg-emoji emoji-id="{EMOJI_COIN}">💰</tg-emoji></blockquote>',
                 parse_mode=ParseMode.HTML
             )
             return
 
-        storage.deduct_balance(user_id, bet)
-        asyncio.create_task(notify_referrer_commission(user_id, bet))
+        async def _send(text, kb):
+            return await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
-        session = _create_session(bet, message.chat.id, user_id)
-        _sessions[user_id] = session
-        await state.set_state(GoldGame.playing)
-
-    sent = await message.answer(
-        game_text(session),
-        parse_mode=ParseMode.HTML,
-        reply_markup=build_gold_keyboard(session)
-    )
-    session['message_id'] = sent.message_id
-    set_owner_fn(sent.message_id, user_id)
-    _game_board_owner[sent.message_id] = user_id
-    _start_timeout(user_id, message.bot, storage)
+        await _start_game(
+            send_fn=_send,
+            user_id=user_id,
+            bet=bet,
+            chat_id=message.chat.id,
+            bot=message.bot,
+            storage=storage,
+            state=state,
+            from_user=message.from_user,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -835,16 +862,11 @@ async def process_gold_bet(message: Message, state: FSMContext, storage):
 
 async def process_gold_command(message: Message, state: FSMContext, storage):
     """
-    Обрабатывает:
-      gold 100  |  /gold 100  |  золото 100  |  /золото 100
+    Обрабатывает: gold 100 | /gold 100 | золото 100 | /золото 100
+    Запускает игру напрямую без FSM-меню.
     """
     text  = message.text.strip()
-    match = re.match(
-        r'^(?:/)?(?:gold|золото)\s+([\d.,]+)$',
-        text,
-        re.IGNORECASE
-    )
-
+    match = re.match(r'^(?:/)?(?:gold|золото)\s+([\d.,]+)$', text, re.IGNORECASE)
     if not match:
         await message.answer(
             f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Неверный формат!</b>\n'
@@ -865,7 +887,6 @@ async def process_gold_command(message: Message, state: FSMContext, storage):
             parse_mode=ParseMode.HTML
         )
         return
-
     if bet > 10000:
         await message.answer(
             f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Максимальная ставка: 10 000</b></blockquote>',
@@ -876,44 +897,38 @@ async def process_gold_command(message: Message, state: FSMContext, storage):
     user_id = message.from_user.id
 
     if _has_active_game(user_id):
-        session = _sessions[user_id]
-        await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
+        await message.answer(_active_game_error_text(_sessions[user_id]), parse_mode=ParseMode.HTML)
         return
 
     bet_lock = _get_bet_lock(user_id)
     if bet_lock.locked():
-        logging.warning(f"[gold] Двойная команда заблокирована: user_id={user_id}")
         return
 
     async with bet_lock:
         if _has_active_game(user_id):
-            session = _sessions[user_id]
-            await message.answer(_active_game_error_text(session), parse_mode=ParseMode.HTML)
+            await message.answer(_active_game_error_text(_sessions[user_id]), parse_mode=ParseMode.HTML)
             return
 
         balance = storage.get_balance(user_id)
         if bet > balance:
             await message.answer(
-                f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Недостаточно средств!</b></blockquote>\n\n'
-                f'<blockquote><tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji>Баланс: <code>{balance:.2f}</code>'
+                f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Недостаточно средств!</b>\n'
+                f'<tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji>Баланс: <code>{balance:.2f}</code>'
                 f'<tg-emoji emoji-id="{EMOJI_COIN}">💰</tg-emoji></blockquote>',
                 parse_mode=ParseMode.HTML
             )
             return
 
-        storage.deduct_balance(user_id, bet)
-        asyncio.create_task(notify_referrer_commission(user_id, bet))
+        async def _send(text, kb):
+            return await message.answer(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
-        session = _create_session(bet, message.chat.id, user_id)
-        _sessions[user_id] = session
-        await state.set_state(GoldGame.playing)
-
-    sent = await message.answer(
-        game_text(session),
-        parse_mode=ParseMode.HTML,
-        reply_markup=build_gold_keyboard(session)
-    )
-    session['message_id'] = sent.message_id
-    set_owner_fn(sent.message_id, user_id)
-    _game_board_owner[sent.message_id] = user_id
-    _start_timeout(user_id, message.bot, storage)
+        await _start_game(
+            send_fn=_send,
+            user_id=user_id,
+            bet=bet,
+            chat_id=message.chat.id,
+            bot=message.bot,
+            storage=storage,
+            state=state,
+            from_user=message.from_user,
+        )
