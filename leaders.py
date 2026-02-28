@@ -54,7 +54,7 @@ DB_PATH = "casino.db"
 # _stats[user_id][date_str] = {
 #   "turnover": float, "wins": float,
 #   "deposits": float, "withdrawals": float,
-#   "name": str   ← всегда @username если есть, иначе first_name
+#   "name": str   ← first_name [+ last_name], иначе username, иначе "User {id}"
 # }
 _stats: dict = {}
 
@@ -67,19 +67,22 @@ is_owner_fn  = _noop_is_owner
 
 # ══════════════════════════════════════════════════════════════════
 #  Вспомогательная: единое правило определения имени
+#  Приоритет: first_name [+ last_name] → username → "User {uid}"
 # ══════════════════════════════════════════════════════════════════
 
-def _resolve_display_name(user_id: int, username: str = "", first_name: str = "") -> str:
-    """
-    Приоритет отображения в лидерборде:
-      1. @username  (если есть)
-      2. first_name (если есть)
-      3. "User {user_id}"
-    """
+def _resolve_display_name(
+    user_id: int,
+    username: str = "",
+    first_name: str = "",
+    last_name: str = "",
+) -> str:
+    nickname = (first_name or "").strip()
+    if last_name:
+        nickname = f"{nickname} {last_name.strip()}".strip()
+    if nickname:
+        return nickname
     if username:
-        return f"@{username}"
-    if first_name:
-        return first_name
+        return username
     return f"User {user_id}"
 
 
@@ -200,25 +203,33 @@ def _ensure_day(user_id: int, date: str, name: str = ""):
 
 # ══════════════════════════════════════════════════════════════════
 #  Синхронизация имён из таблицы users
-#  ВАЖНО: приоритет @username → first_name → "User {uid}"
+#  Приоритет: first_name [+ last_name] → username → "User {uid}"
 # ══════════════════════════════════════════════════════════════════
 
 def sync_names_from_db():
     """
     Подтягивает актуальные имена из таблицы users в кэш _stats.
-    Приоритет: @username → first_name → "User {uid}".
     """
     try:
         with _db_connect() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT user_id, first_name, username FROM users")
-            rows = cur.fetchall()
+            # Пробуем выбрать last_name — если колонки нет, fallback без неё
+            try:
+                cur.execute("SELECT user_id, first_name, last_name, username FROM users")
+                rows = cur.fetchall()
+                has_last_name = True
+            except Exception:
+                cur.execute("SELECT user_id, first_name, username FROM users")
+                rows = cur.fetchall()
+                has_last_name = False
+
         updated = 0
         for row in rows:
             uid        = int(row["user_id"])
             first_name = row["first_name"] or ""
             username   = row["username"]   or ""
-            display    = _resolve_display_name(uid, username, first_name)
+            last_name  = (row["last_name"] or "") if has_last_name else ""
+            display    = _resolve_display_name(uid, username, first_name, last_name)
             if uid in _stats:
                 for date in _stats[uid]:
                     _stats[uid][date]["name"] = display
@@ -260,8 +271,8 @@ def record_game_result(user_id: int, name: str, bet: float, win: float):
     Вызывается из mines.py / tower.py / gold.py / game.py / duels.py
     после завершённой ставки.
 
-    name — уже готовое отображаемое имя (@username или first_name),
-           сформированное через _get_display_name() в игровом модуле.
+    name — уже готовое отображаемое имя (first_name [+ last_name] или username),
+           сформированное через _get_display_name() / _fmt_user() в игровом модуле.
     bet  — размер ставки (оборот)
     win  — сумма выплаты (0.0 при проигрыше)
     """
@@ -269,11 +280,9 @@ def record_game_result(user_id: int, name: str, bet: float, win: float):
     _ensure_day(user_id, date, name)
     _stats[user_id][date]["turnover"] += bet
     _stats[user_id][date]["wins"]     += win
-    # Обновляем имя — оно всегда актуальное из from_user на момент хода
     _stats[user_id][date]["name"]      = name
     _save_stat_to_db(user_id, date)
 
-    # Пишем каждую ставку в общую историю game_results
     _save_to_game_results_sync(user_id, "gold", win)
 
 
@@ -341,6 +350,10 @@ def update_user_name(storage, user_id: int, first_name: str):
 # ══════════════════════════════════════════════════════════════════
 
 def get_top10(storage, leader_type: str, period: str) -> list:
+    # Проверка допустимых значений (защита от инъекций через leader_type/period)
+    if leader_type not in LEADER_TYPES or period not in LEADER_PERIODS:
+        return []
+
     dates   = _dates_for_period(period)
     results = {}
 
@@ -395,6 +408,12 @@ def get_leaders_keyboard(active_type: str, active_period: str) -> InlineKeyboard
 # ══════════════════════════════════════════════════════════════════
 
 def build_leaders_text(storage, leader_type: str, period: str) -> str:
+    # Защита от недопустимых значений
+    if leader_type not in LEADER_TYPES:
+        leader_type = "turnover"
+    if period not in LEADER_PERIODS:
+        period = "today"
+
     type_label, type_emoji_id = TYPE_LABELS[leader_type]
     period_label = PERIOD_LABELS[period]
     top = get_top10(storage, leader_type, period)
@@ -449,6 +468,7 @@ async def leaders_switch(callback: CallbackQuery):
 
     _, leader_type, period = parts
 
+    # ── Валидация входных данных ──────────────────────────────────
     if leader_type not in LEADER_TYPES or period not in LEADER_PERIODS:
         await callback.answer("Неверные параметры", show_alert=True)
         return
