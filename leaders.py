@@ -54,7 +54,7 @@ DB_PATH = "casino.db"
 # _stats[user_id][date_str] = {
 #   "turnover": float, "wins": float,
 #   "deposits": float, "withdrawals": float,
-#   "name": str
+#   "name": str   ← всегда @username если есть, иначе first_name
 # }
 _stats: dict = {}
 
@@ -63,6 +63,24 @@ def _noop_is_owner(message_id: int, user_id: int) -> bool: return True
 
 set_owner_fn = _noop_set_owner
 is_owner_fn  = _noop_is_owner
+
+
+# ══════════════════════════════════════════════════════════════════
+#  Вспомогательная: единое правило определения имени
+# ══════════════════════════════════════════════════════════════════
+
+def _resolve_display_name(user_id: int, username: str = "", first_name: str = "") -> str:
+    """
+    Приоритет отображения в лидерборде:
+      1. @username  (если есть)
+      2. first_name (если есть)
+      3. "User {user_id}"
+    """
+    if username:
+        return f"@{username}"
+    if first_name:
+        return first_name
+    return f"User {user_id}"
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -78,7 +96,6 @@ def _db_connect() -> sqlite3.Connection:
 def init_leaders_db():
     """
     Создаёт таблицу leaders_stats если её нет.
-    Таблица game_results уже создана в database.py — не дублируем.
     Загружает данные в память (_stats) и синхронизирует имена из users.
     """
     try:
@@ -182,14 +199,14 @@ def _ensure_day(user_id: int, date: str, name: str = ""):
 
 
 # ══════════════════════════════════════════════════════════════════
-#  Синхронизация имён из таблицы users (database.py)
+#  Синхронизация имён из таблицы users
+#  ВАЖНО: приоритет @username → first_name → "User {uid}"
 # ══════════════════════════════════════════════════════════════════
 
 def sync_names_from_db():
     """
     Подтягивает актуальные имена из таблицы users в кэш _stats.
-    Вызывается автоматически из init_leaders_db() при старте бота.
-    Можно вызвать повторно для принудительного обновления имён.
+    Приоритет: @username → first_name → "User {uid}".
     """
     try:
         with _db_connect() as conn:
@@ -201,15 +218,13 @@ def sync_names_from_db():
             uid        = int(row["user_id"])
             first_name = row["first_name"] or ""
             username   = row["username"]   or ""
-            # Приоритет: @username → first_name → "User {uid}"
-            display = f"@{username}" if username else (first_name or f"User {uid}")
+            display    = _resolve_display_name(uid, username, first_name)
             if uid in _stats:
                 for date in _stats[uid]:
                     _stats[uid][date]["name"] = display
                 updated += 1
         logging.info(f"[Leaders] Имена синхронизированы из users: {updated} пользователей.")
     except Exception as e:
-        # Таблица users может ещё не существовать при первом запуске
         logging.warning(f"[Leaders] sync_names_from_db пропущен: {e}")
 
 
@@ -242,29 +257,28 @@ def _dates_for_period(period: str) -> list:
 
 def record_game_result(user_id: int, name: str, bet: float, win: float):
     """
-    Вызывается из mines.py / tower.py / game.py / duels.py после завершённой ставки.
+    Вызывается из mines.py / tower.py / gold.py / game.py / duels.py
+    после завершённой ставки.
+
+    name — уже готовое отображаемое имя (@username или first_name),
+           сформированное через _get_display_name() в игровом модуле.
     bet  — размер ставки (оборот)
     win  — сумма выплаты (0.0 при проигрыше)
-
-    Пишет в leaders_stats (агрегированная статистика для лидерборда)
-    и в game_results (подробная история каждой ставки из database.py).
     """
     date = _today_str()
     _ensure_day(user_id, date, name)
     _stats[user_id][date]["turnover"] += bet
     _stats[user_id][date]["wins"]     += win
+    # Обновляем имя — оно всегда актуальное из from_user на момент хода
     _stats[user_id][date]["name"]      = name
     _save_stat_to_db(user_id, date)
 
-    # Пишем каждую ставку в общую историю game_results (синхронно, та же casino.db)
-    _save_to_game_results_sync(user_id, "duel", win)
+    # Пишем каждую ставку в общую историю game_results
+    _save_to_game_results_sync(user_id, "gold", win)
 
 
 def _save_to_game_results_sync(user_id: int, game_name: str, win_amount: float):
-    """
-    Синхронная запись в game_results (таблица из database.py).
-    Используется чтобы не требовать async в record_game_result.
-    """
+    """Синхронная запись в game_results (таблица из database.py)."""
     try:
         with _db_connect() as conn:
             conn.execute("""
@@ -279,8 +293,7 @@ def _save_to_game_results_sync(user_id: int, game_name: str, win_amount: float):
 def record_deposit_stat(user_id: int, name: str, amount: float):
     """
     Вызывается из payment.py после подтверждения депозита.
-    Обновляет leaders_stats (колонка deposits) для лидерборда.
-    Запись в таблицу deposits делается отдельно через database.save_deposit().
+    name должен быть уже разрешён через _resolve_display_name.
     """
     date = _today_str()
     _ensure_day(user_id, date, name)
@@ -293,8 +306,7 @@ def record_deposit_stat(user_id: int, name: str, amount: float):
 def record_withdrawal_stat(user_id: int, name: str, amount: float):
     """
     Вызывается из payment.py после успешного вывода.
-    Обновляет leaders_stats (колонка withdrawals) для лидерборда.
-    Запись в таблицу withdrawals делается отдельно через database.save_withdrawal().
+    name должен быть уже разрешён через _resolve_display_name.
     """
     date = _today_str()
     _ensure_day(user_id, date, name)
@@ -305,9 +317,7 @@ def record_withdrawal_stat(user_id: int, name: str, amount: float):
 
 
 def rollback_withdrawal_stat(user_id: int, amount: float):
-    """
-    Откатывает record_withdrawal_stat — вызывается если чек не был создан.
-    """
+    """Откатывает record_withdrawal_stat — вызывается если чек не был создан."""
     date = _today_str()
     day  = _stats.get(user_id, {}).get(date)
     if day is None:
@@ -346,15 +356,6 @@ def get_top10(storage, leader_type: str, period: str) -> list:
 
     sorted_list = sorted(results.values(), key=lambda x: x["value"], reverse=True)
     return sorted_list[:10]
-
-
-def _get_name_from_stats(user_id: int) -> str:
-    day_data = _stats.get(user_id, {})
-    for date in sorted(day_data.keys(), reverse=True):
-        name = day_data[date].get("name", "")
-        if name:
-            return name
-    return ""
 
 
 # ══════════════════════════════════════════════════════════════════
