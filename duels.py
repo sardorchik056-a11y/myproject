@@ -719,12 +719,15 @@ async def handle_mygames(message: Message) -> None:
         n    = d['throws']
         amt  = d['amount']
         p2t  = d['player2_tag'] or "???"
-        st   = '<tg-emoji emoji-id="5303214794336125778">👤</tg-emoji> ждёт игрока if d['status'] == 'waiting' else '⚔️ идёт'
+        if d['status'] == 'waiting':
+            st = '<tg-emoji emoji-id="5303214794336125778">👤</tg-emoji> ждёт игрока'
+        else:
+            st = '⚔️ идёт'
 
         if d['status'] == 'playing':
             p1d = len(d['player1_scores'])
             p2d = len(d['player2_scores'])
-            sc  = f'<tg-emoji emoji-id="5386367538735104399">👤</tg-emoji> {d['player1_tag']} {p1d}/{n}  —  {p2t} {p2d}/{n}'
+            sc  = f'<tg-emoji emoji-id="5386367538735104399">👤</tg-emoji> {d["player1_tag"]} {p1d}/{n}  —  {p2t} {p2d}/{n}'
         else:
             sc = f" vs {p2t}"
 
