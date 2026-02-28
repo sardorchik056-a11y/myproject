@@ -24,6 +24,9 @@ from mines import (
 from tower import (
     tower_router, TowerGame, show_tower_menu, process_tower_bet, process_tower_command
 )
+from gold import (
+    gold_router, GoldGame, show_gold_menu, process_gold_bet, process_gold_command
+)
 from referrals import (
     referral_router, referral_storage,
     setup_referrals, process_start_referral,
@@ -33,6 +36,7 @@ from leaders import leaders_router, show_leaders, update_user_name, init_leaders
 import leaders as _leaders_module
 import mines as _mines_module
 import tower as _tower_module
+import gold as _gold_module
 import referrals as _referrals_module
 import payments as _payments_module
 
@@ -100,6 +104,7 @@ DEP_PATTERN      = re.compile(
     r'^/?(?:деп|пополнить|депозит|dep|deposit)\s+(\d+(?:\.\d+)?)$',
     re.IGNORECASE
 )
+GOLD_PATTERN = re.compile(r'^/?(?:gold|золото)\s+[\d.,]+$', re.IGNORECASE)
 
 _transfer_locks: dict = {}
 
@@ -128,6 +133,8 @@ def _inject_leaders_owner_fns():
     _mines_module.is_owner_fn      = _is_msg_owner
     _tower_module.set_owner_fn     = _set_msg_owner
     _tower_module.is_owner_fn      = _is_msg_owner
+    _gold_module.set_owner_fn      = _set_msg_owner
+    _gold_module.is_owner_fn       = _is_msg_owner
     _referrals_module.set_owner_fn = _set_msg_owner
     _referrals_module.is_owner_fn  = _is_msg_owner
     _payments_module.set_owner_fn  = _set_msg_owner
@@ -232,8 +239,11 @@ def get_games_menu():
             InlineKeyboardButton(text="🎳 Боулинг", callback_data=GAME_CALLBACKS['bowling'])
         ],
         [
-            InlineKeyboardButton(text="💣 Мины", callback_data="mines_menu"),
-            InlineKeyboardButton(text="🏰 Башня", callback_data="tower_menu")
+            InlineKeyboardButton(text="💣 Мины",   callback_data="mines_menu"),
+            InlineKeyboardButton(text="🏰 Башня",  callback_data="tower_menu")
+        ],
+        [
+            InlineKeyboardButton(text="⛏ Золото", callback_data="gold_menu")
         ],
         [
             InlineKeyboardButton(text="Назад", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
@@ -517,6 +527,14 @@ async def tower_menu_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await show_tower_menu(callback, storage, betting_game)
 
+@router.callback_query(F.data == "gold_menu")
+async def gold_menu_callback(callback: CallbackQuery, state: FSMContext):
+    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
+        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
+        return
+    await state.clear()
+    await show_gold_menu(callback, storage)
+
 @router.callback_query(F.data == GAME_CALLBACKS['dice'])
 async def dice_menu(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -657,6 +675,10 @@ async def mines_command_handler(message: Message, state: FSMContext):
 async def tower_command_handler(message: Message, state: FSMContext):
     await process_tower_command(message, state, storage)
 
+@router.message(F.text.regexp(GOLD_PATTERN))
+async def gold_command_handler(message: Message, state: FSMContext):
+    await process_gold_command(message, state, storage)
+
 @router.message(F.text.regexp(GAMES_PATTERN))
 async def handle_games_command(message: Message, state: FSMContext):
     await state.clear()
@@ -755,6 +777,11 @@ async def handle_text_message(message: Message, state: FSMContext):
         await process_tower_bet(message, state, storage)
         return
 
+    # Золото
+    if current_state == GoldGame.choosing_bet.state:
+        await process_gold_bet(message, state, storage)
+        return
+
     # Дуэли
     if is_duel_command(message.text):
         await handle_duel_command(message)
@@ -844,6 +871,7 @@ async def main():
     dp.include_router(router)
     dp.include_router(mines_router)
     dp.include_router(tower_router)
+    dp.include_router(gold_router)
     dp.include_router(referral_router)
     dp.include_router(payment_router)
     dp.include_router(leaders_router)
