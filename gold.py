@@ -70,6 +70,9 @@ CELLS              = 2
 BOMB_CHANCE        = 0.60
 INACTIVITY_TIMEOUT = 300
 
+MIN_BET = 0.1
+MAX_BET = 10000.0
+
 # Множители за каждый пройденный уровень [1й..7й]
 GOLD_MULTIPLIERS = [1.9, 3.8, 7.6, 14.5, 29.9, 56.78, 116.84]
 
@@ -96,17 +99,18 @@ is_owner_fn  = _noop_is_owner
 
 # ══════════════════════════════════════════════════════════════════
 #  Вспомогательная функция: получить отображаемое имя пользователя
+#  Приоритет: first_name [+ last_name] → username → "User {id}"
 # ══════════════════════════════════════════════════════════════════
 
 def _get_display_name(from_user) -> str:
-    """
-    Приоритет: @username → first_name → "User {id}"
-    Аналогично логике в leaders.py для единообразия.
-    """
-    if from_user.username:
-        return f"@{from_user.username}"
-    if from_user.first_name:
-        return from_user.first_name
+    nickname = from_user.first_name or ""
+    if getattr(from_user, 'last_name', None):
+        nickname += f" {from_user.last_name}"
+    nickname = nickname.strip()
+    if nickname:
+        return nickname
+    if getattr(from_user, 'username', None):
+        return from_user.username
     return f"User {from_user.id}"
 
 
@@ -222,6 +226,18 @@ def _active_game_error_text(session: dict) -> str:
         f"</blockquote>\n\n"
         f"<blockquote><i>Завершите текущую игру прежде чем начать новую.</i></blockquote>"
     )
+
+
+def _validate_bet(bet: float) -> str | None:
+    """Возвращает текст ошибки или None если всё ок."""
+    import math
+    if not math.isfinite(bet) or bet <= 0:
+        return "Некорректная сумма ставки."
+    if bet < MIN_BET:
+        return f"Минимальная ставка: {MIN_BET}"
+    if bet > MAX_BET:
+        return f"Максимальная ставка: {int(MAX_BET):,}"
+    return None
 
 
 def _create_session(bet: float, chat_id: int, owner_id: int = 0) -> dict:
@@ -367,7 +383,6 @@ async def show_gold_menu(callback: CallbackQuery, storage, state: FSMContext = N
         )
         return
 
-    balance = storage.get_balance(user_id)
     text = (
         f'<blockquote><b><tg-emoji emoji-id="{EMOJI_WIN}">🏆</tg-emoji> Золото</b></blockquote>\n\n'
         f'<blockquote><tg-emoji emoji-id="{EMOJI_INPUT}">✏️</tg-emoji> <b>Введите сумму ставки:</b></blockquote>'
@@ -459,9 +474,22 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
     caller_id = callback.from_user.id
     msg_id    = callback.message.message_id
 
-    parts     = callback.data.split("_")
-    floor_idx = int(parts[2])
-    col       = int(parts[3])
+    # ── Валидация callback_data ────────────────────────────────────
+    parts = callback.data.split("_")
+    if len(parts) != 4:
+        await callback.answer()
+        return
+    try:
+        floor_idx = int(parts[2])
+        col       = int(parts[3])
+    except ValueError:
+        await callback.answer()
+        return
+
+    # ── Проверка диапазонов ────────────────────────────────────────
+    if floor_idx < 0 or floor_idx >= FLOORS or col < 0 or col >= CELLS:
+        await callback.answer()
+        return
 
     board_owner = _game_board_owner.get(msg_id)
     if board_owner is None or board_owner != caller_id:
@@ -521,7 +549,6 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
         else:
             floor_data['bomb_col'] = 1 - col
 
-        # Имя для лидерборда (через @username в приоритете)
         display_name = _get_display_name(callback.from_user)
 
         if is_bomb:
@@ -538,12 +565,10 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
             _cancel_timeout(user_id)
             await state.clear()
 
-            # Раскрываем бомбы на непройденных этажах выше
             for fi in range(floor_idx + 1, FLOORS):
                 if session['floors'][fi]['bomb_col'] is None:
                     session['floors'][fi]['bomb_col'] = random.randint(0, 1)
 
-            # ── Запись в лидерборд (проигрыш: win=0) ─────────────
             record_game_result(user_id, display_name, bet, 0.0)
             asyncio.create_task(db_save_game_result(user_id, 'gold', 0.0))
 
@@ -590,7 +615,6 @@ async def gold_cell_handler(callback: CallbackQuery, state: FSMContext):
                 _cancel_timeout(user_id)
                 await state.clear()
 
-                # ── Запись в лидерборд (победа: win=winnings) ─────
                 record_game_result(user_id, display_name, bet, winnings)
                 asyncio.create_task(db_save_game_result(user_id, 'gold', winnings))
 
@@ -680,7 +704,6 @@ async def gold_cashout(callback: CallbackQuery, state: FSMContext):
     _cancel_timeout(user_id)
     await state.clear()
 
-    # ── Запись в лидерборд (кэшаут: win=winnings) ─────────────────
     display_name = _get_display_name(callback.from_user)
     record_game_result(user_id, display_name, bet, winnings)
     asyncio.create_task(db_save_game_result(user_id, 'gold', winnings))
@@ -807,15 +830,10 @@ async def process_gold_bet(message: Message, state: FSMContext, storage):
             )
             return
 
-        if bet < 0.1:
+        err = _validate_bet(bet)
+        if err:
             await message.answer(
-                f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Минимальная ставка: 0.1</b></blockquote>',
-                parse_mode=ParseMode.HTML
-            )
-            return
-        if bet > 10000:
-            await message.answer(
-                f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Максимальная ставка: 10 000</b></blockquote>',
+                f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> {err}</b></blockquote>',
                 parse_mode=ParseMode.HTML
             )
             return
@@ -866,18 +884,16 @@ async def process_gold_command(message: Message, state: FSMContext, storage):
     try:
         bet = float(match.group(1).replace(',', '.'))
     except ValueError:
-        await message.answer("❌ Неверный формат числа.")
-        return
-
-    if bet < 0.1:
         await message.answer(
-            f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Минимальная ставка: 0.1</b></blockquote>',
+            f'<blockquote><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Введите корректную сумму.</blockquote>',
             parse_mode=ParseMode.HTML
         )
         return
-    if bet > 10000:
+
+    err = _validate_bet(bet)
+    if err:
         await message.answer(
-            f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> Максимальная ставка: 10 000</b></blockquote>',
+            f'<blockquote><b><tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> {err}</b></blockquote>',
             parse_mode=ParseMode.HTML
         )
         return
