@@ -163,11 +163,12 @@ async def _fetch_user_info(user_id: int) -> tuple[str | None, str | None]:
                 first_name = result.get("first_name") or None
                 bio        = result.get("bio") or None
 
-                logging.debug(
-                    "[Bonus] user_id=%d first_name=%r bio=%r",
+                logging.info(
+                    "[Bonus] getChat OK user_id=%d | first_name=%r | bio=%r | keys=%s",
                     user_id,
-                    (first_name or "")[:50],
-                    (bio or "")[:100],
+                    (first_name or "")[:80],
+                    (bio or "")[:200],
+                    list(result.keys()),
                 )
 
                 return first_name, bio
@@ -365,6 +366,38 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
 # ══════════════════════════════════════════════════════════════════
 #  Хендлеры роутера
 # ══════════════════════════════════════════════════════════════════
+
+@bonus_router.message(Command("bonusdebug"))
+async def cmd_bonus_debug(message: Message) -> None:
+    """Временная диагностика — показывает что именно видит бот в профиле."""
+    user_id = message.from_user.id
+    first_name, bio = await _fetch_user_info(user_id)
+    name_ok = _check_name(first_name)
+    bio_ok  = _check_bio(bio)
+    await message.answer(
+        f'<b>🔍 Диагностика профиля</b>
+
+'
+        f'<blockquote>'
+        f'<b>first_name (никнейм):</b>
+<code>{first_name!r}</code>
+'
+        f'name_ok = <b>{name_ok}</b>
+
+'
+        f'<b>bio (о себе):</b>
+<code>{bio!r}</code>
+'
+        f'bio_ok = <b>{bio_ok}</b>
+
+'
+        f'<b>Ищем в никнейме:</b> <code>{REQUIRED_NAME_SUBSTRING}</code>
+'
+        f'<b>Ищем в bio:</b> <code>{REQUIRED_BIO_SUBSTRING}</code>'
+        f'</blockquote>',
+        parse_mode="HTML",
+    )
+
 
 @bonus_router.message(Command("bonus", "бонус"))
 async def cmd_bonus_slash(message: Message) -> None:
