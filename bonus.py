@@ -3,27 +3,25 @@ bonus.py — Бонусная система Telegram-казино.
 
 Механика:
   - Бонус 0.1 монеты каждые 24 часа.
-  - Требование: в НИКНЕЙМЕ (first_name) И в bio должна быть строка "@FesteryCas_bot".
-    Username (@relessorg и т.п.) не проверяется.
-  - Если после получения бонуса приписка убрана — следующий бонус
-    доступен только через 72 часа (штраф).
-  - Каждые 2 часа фоновый воркер проверяет всех получивших бонус.
+  - Требование:
+      • В НИКНЕЙМЕ (first_name) должна быть строка "@FesteryCas_bot" (где угодно).
+      • В BIO должна быть строка "честная игровая зона-@FesteryCas_bot" (где угодно).
+  - Если после получения бонуса приписка убрана — штраф 72 часа.
+  - Каждые 2 часа воркер проверяет всех получивших бонус.
 
 Команды: /bonus | /бонус | bonus | бонус
-Кнопка:  callback_data="bonus_menu"
 
 Исправления безопасности:
-  - [FIX-1] Race condition при начислении: атомарная блокировка через asyncio.Lock
-  - [FIX-2] Утечка памяти: очистка устаревших записей (>30 дней).
-  - [FIX-3] HTML-инъекция: first_name экранируется через html.escape.
-  - [FIX-4] penalty_at=None при penalty=True — защита от NPE.
-  - [FIX-5] Атомарный откат last_claimed при ошибке начисления.
-  - [FIX-6] Нормализация пустых строк из getChat через or None.
-  - [FIX-7] Логирование raw данных из Telegram — обрезка и %s форматирование.
-  - [FIX-8] Watchdog корректно пробрасывает CancelledError.
-  - [FIX-9] Семафор на параллельные getChat в watchdog.
-  - [FIX-10] handle_bonus принимает явный user_id — нет зависимости от message.from_user
-             (решает проблему callback.message где from_user — это бот, а не пользователь).
+  - [FIX-1]  Race condition: asyncio.Lock на пользователя.
+  - [FIX-2]  Утечка памяти: очистка записей >30 дней.
+  - [FIX-3]  HTML-инъекция: html.escape для first_name.
+  - [FIX-4]  penalty_at=None при penalty=True — защита от NPE.
+  - [FIX-5]  Атомарный откат last_claimed при ошибке начисления.
+  - [FIX-6]  Нормализация пустых строк из getChat.
+  - [FIX-7]  Безопасное логирование внешних данных.
+  - [FIX-8]  Watchdog корректно пробрасывает CancelledError.
+  - [FIX-9]  Семафор на параллельные getChat в watchdog.
+  - [FIX-10] handle_bonus принимает явный user_id (callback fix).
 """
 
 import asyncio
@@ -34,7 +32,7 @@ from collections import defaultdict
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message
 from aiogram.enums import ParseMode
 
 # ─── внешние зависимости ──────────────────────────────────────────────────────
@@ -51,11 +49,12 @@ PENALTY_COOLDOWN = 72 * 3600   # 72 часа (штраф)
 CHECK_INTERVAL   = 2  * 3600   # 2 часа (воркер)
 STALE_THRESHOLD  = 30 * 86400  # 30 дней — очистка неактивных
 
-# Ищем подстроку в first_name И в bio. Регистронезависимо, позиция не важна.
-REQUIRED_SUBSTRING = "@FesteryCas_bot"
+# Никнейм: ищем где угодно, регистронезависимо
+REQUIRED_NAME_SUBSTRING = "@FesteryCas_bot"
+# Bio: ищем точную фразу где угодно, регистронезависимо
+REQUIRED_BIO_SUBSTRING  = "честная игровая зона-@FesteryCas_bot"
 
 # ─── ID кастомных эмодзи ──────────────────────────────────────────────────────
-EMOJI_BACK   = "5906771962734057347"
 EMOJI_COIN   = "5197434882321567830"
 EMOJI_WIN    = "5278467510604160626"
 EMOJI_LOSS   = "5447183459602669338"
@@ -106,26 +105,22 @@ def _get_user_state(user_id: int) -> dict:
     return _bonus_data[user_id]
 
 
-def _has_tag(text: str | None) -> bool:
-    """
-    Проверяет наличие @FesteryCas_bot в строке.
-    Регистронезависимо. Позиция в строке не важна — подходит любая.
-    Если строка None или пустая — False.
-    """
-    if not text:
+def _check_name(text: str | None) -> bool:
+    """Никнейм должен содержать @FesteryCas_bot (регистронезависимо, позиция любая)."""
+    if not text or not text.strip():
         return False
-    # strip() на случай строки из одних пробелов
-    cleaned = text.strip()
-    if not cleaned:
+    return REQUIRED_NAME_SUBSTRING.lower() in text.strip().lower()
+
+
+def _check_bio(text: str | None) -> bool:
+    """Bio должно содержать 'честная игровая зона-@FesteryCas_bot' (регистронезависимо, позиция любая)."""
+    if not text or not text.strip():
         return False
-    return REQUIRED_SUBSTRING.lower() in cleaned.lower()
+    return REQUIRED_BIO_SUBSTRING.lower() in text.strip().lower()
 
 
 async def _fetch_user_info(user_id: int) -> tuple[str | None, str | None]:
-    """
-    Получает (first_name, bio) через getChat по user_id.
-    Возвращает (None, None) при любой ошибке.
-    """
+    """Получает (first_name, bio) через getChat. Возвращает (None, None) при ошибке."""
     if _bot is None:
         return None, None
     try:
@@ -196,15 +191,11 @@ def is_bonus_command(text: str) -> bool:
 
 async def handle_bonus(message: Message, user_id: int | None = None) -> None:
     """
-    Основная логика бонуса.
+    [FIX-10] Принимает явный user_id — критично при вызове из callback,
+    где message.from_user — это бот, а не пользователь.
 
-    [FIX-10] Принимает явный user_id — это критично при вызове из callback,
-    где message — это сообщение бота (from_user = бот), а не пользователя.
-
-    Использование:
-      - из команды:  await handle_bonus(message)
-                     → user_id берётся из message.from_user.id
-      - из callback: await handle_bonus(callback.message, user_id=callback.from_user.id)
+    Из команды:  await handle_bonus(message)
+    Из callback: await handle_bonus(callback.message, user_id=callback.from_user.id)
     """
     actual_user_id = user_id if user_id is not None else message.from_user.id
     async with _user_locks[actual_user_id]:  # [FIX-1]
@@ -214,33 +205,29 @@ async def handle_bonus(message: Message, user_id: int | None = None) -> None:
 async def _handle_bonus_locked(message: Message, user_id: int) -> None:
     """Внутренняя логика под блокировкой пользователя."""
 
-    kb_back = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="Назад", callback_data="back_to_main")
-    ]])
-
     state = _get_user_state(user_id)
     state["last_activity"] = _now()
 
-    # ── 1. Получаем first_name и bio по user_id ───────────────────
+    # ── 1. Получаем first_name и bio ─────────────────────────────
     first_name, bio = await _fetch_user_info(user_id)
 
-    name_ok = _has_tag(first_name)
-    bio_ok  = _has_tag(bio)
+    name_ok = _check_name(first_name)
+    bio_ok  = _check_bio(bio)
 
     if not name_ok or not bio_ok:
         missing = []
         if not name_ok:
             missing.append(
                 f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> '
-                f'В <b>никнейме</b> (имя профиля) должна быть приписка '
+                f'В <b>никнейме</b> должна быть приписка '
                 f'<code>@FesteryCas_bot</code>\n'
-                f'  Пример: <code>🏙@FesteryCas_bot</code> или <code>Иван @FesteryCas_bot</code>'
+                f'  Пример: <code>Иван @FesteryCas_bot</code>'
             )
         if not bio_ok:
             missing.append(
                 f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> '
-                f'В <b>«О себе»</b> (bio) должна быть приписка '
-                f'<code>@FesteryCas_bot</code>'
+                f'В <b>«О себе»</b> должна быть строка:\n'
+                f'  <code>честная игровая зона-@FesteryCas_bot</code>'
             )
         await message.answer(
             f'<blockquote><b>'
@@ -251,7 +238,6 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
             f'\n\n<tg-emoji emoji-id="{EMOJI_BONUS}">💎</tg-emoji> '
             f'После выполнения условий введите /bonus снова</blockquote>',
             parse_mode=ParseMode.HTML,
-            reply_markup=kb_back,
         )
         return
 
@@ -271,7 +257,6 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
         await message.answer(
             f'<blockquote>{body}</blockquote>',
             parse_mode=ParseMode.HTML,
-            reply_markup=kb_back,
         )
         return
 
@@ -327,7 +312,6 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
         f'</blockquote>\n\n'
         f'<blockquote><i>Не убирайте приписку — иначе штраф 72ч!</i></blockquote>',
         parse_mode=ParseMode.HTML,
-        reply_markup=kb_back,
     )
     logging.info("[Bonus] Бонус %.2f начислен user_id=%d (name=%s)", BONUS_AMOUNT, user_id, safe_name)
 
@@ -354,8 +338,8 @@ async def _check_one_user(user_id: int) -> None:
     async with _watchdog_semaphore:  # [FIX-9]
         try:
             first_name, bio = await _fetch_user_info(user_id)
-            name_ok = _has_tag(first_name)
-            bio_ok  = _has_tag(bio)
+            name_ok = _check_name(first_name)
+            bio_ok  = _check_bio(bio)
 
             if not name_ok or not bio_ok:
                 async with _user_locks[user_id]:  # [FIX-1]
@@ -376,8 +360,7 @@ async def _check_one_user(user_id: int) -> None:
                                 f'<tg-emoji emoji-id="{EMOJI_WARN}">⚠️</tg-emoji>'
                                 f' Приписка убрана!</b></blockquote>\n\n'
                                 f'<blockquote>'
-                                f'Мы заметили, что вы убрали '
-                                f'<code>@FesteryCas_bot</code> из никнейма или bio.\n\n'
+                                f'Мы заметили, что вы убрали приписку из никнейма или bio.\n\n'
                                 f'<tg-emoji emoji-id="{EMOJI_CLOCK}">⏰</tg-emoji> '
                                 f'Следующий бонус доступен через <b>72 часа</b>.\n\n'
                                 f'Верните приписку — и снова получайте бонус каждые 24 часа!'
