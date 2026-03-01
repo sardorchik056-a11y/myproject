@@ -1,3 +1,4 @@
+import os
 import logging
 import uuid
 import asyncio
@@ -6,6 +7,7 @@ import time
 import re as _re
 from datetime import datetime, timedelta
 from typing import Optional, Dict
+from dotenv import load_dotenv
 
 import aiohttp
 from aiogram import Router, F, Bot
@@ -27,8 +29,10 @@ except ImportError:
     def db_update_field(user_id, field, value): pass
     def db_get_user(user_id): return {}
 
+load_dotenv()
+
 # Настройки Cryptobot
-CRYPTOBOT_API_KEY = "526036:AAmCKe81iaKXe5Js1BkxpwJ4ZKrPTWqPB0v"
+CRYPTO_BOT_TOKEN = os.getenv('CRYPTO_BOT_TOKEN')
 CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
 
 # Минимальные суммы
