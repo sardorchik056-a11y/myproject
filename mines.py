@@ -47,7 +47,7 @@ HIDDEN_MINES = {
 }
 
 CELL_CLOSED  = "🌑"
-CELL_GEM     = "💎"
+CELL_GEM     = "5197288647275071607"
 CELL_MINE    = "💣"
 CELL_EXPLODE = "💥"
 
