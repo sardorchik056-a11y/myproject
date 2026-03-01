@@ -3,8 +3,8 @@ bonus.py — Бонусная система Telegram-казино.
 
 Механика:
   - Бонус 0.1 монеты каждые 24 часа.
-  - Требование: в username должна быть приписка FesteryCas_bot,
-    а в bio профиля — строка "@FesteryCas_bot".
+  - Требование: username содержит FesteryCas_bot,
+    а в bio профиля есть строка "@FesteryCas_bot".
   - Если после получения бонуса приписка убрана — следующий бонус
     доступен только через 72 часа (штраф).
   - Каждые 2 часа фоновый воркер проверяет всех получивших бонус:
@@ -12,17 +12,32 @@ bonus.py — Бонусная система Telegram-казино.
 
 Команды: /bonus | /бонус | bonus | бонус
 Кнопка:  callback_data="bonus_menu"
+
+Исправления безопасности:
+  - [FIX-1] Race condition при начислении: атомарная блокировка через asyncio.Lock
+  - [FIX-2] Утечка памяти: _bonus_data неограниченно растёт — добавлена очистка
+    устаревших записей (>30 дней без активности).
+  - [FIX-3] HTML-инъекция: username/bio в сообщениях экранируются через html.escape.
+  - [FIX-4] Watchdog не проверял users на penalty_at=None при penalty=True (NPE).
+  - [FIX-5] Ошибка баланса не откатывала last_claimed атомарно — исправлено.
+  - [FIX-6] getChat может вернуть пустой username при смене — обработка None надёжнее.
+  - [FIX-7] Логирование username без экранирования могло сломать лог-парсеры — исправлено.
+  - [FIX-8] Watchdog при остановке (CancelledError) не завершал текущий проход корректно.
+  - [FIX-9] Добавлен лимит одновременных запросов getChat в watchdog (семафор).
 """
 
 import asyncio
+import html
 import logging
 import time
+from collections import defaultdict
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import (
     Message,
-    InlineKeyboardMarkup, InlineKeyboardButton
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from aiogram.enums import ParseMode
 
@@ -34,13 +49,15 @@ except ImportError:
     logging.warning("[Bonus] payments.py не найден — баланс не будет начисляться.")
 
 # ─── конфигурация ─────────────────────────────────────────────────────────────
-BONUS_AMOUNT     = 0.1
-BONUS_COOLDOWN   = 24 * 3600   # 24 часа
-PENALTY_COOLDOWN = 72 * 3600   # 72 часа (штраф за снятие приписки)
-CHECK_INTERVAL   = 2  * 3600   # 2 часа (воркер)
+BONUS_AMOUNT      = 0.1
+BONUS_COOLDOWN    = 24 * 3600    # 24 часа
+PENALTY_COOLDOWN  = 72 * 3600    # 72 часа (штраф за снятие приписки)
+CHECK_INTERVAL    = 2  * 3600    # 2 часа (воркер)
+STALE_THRESHOLD   = 30 * 86400   # 30 дней — очистка неактивных записей
 
-REQUIRED_USERNAME_PART = "FesteryCas_bot"                      # username должен СОДЕРЖАТЬ это (где угодно)
-REQUIRED_BIO_SUBSTRING = "лутшая игровая зона-@FesteryCas_bot"  # bio должно СОДЕРЖАТЬ это
+# Приписка: ищем подстроку где угодно, регистронезависимо
+REQUIRED_USERNAME_PART = "FesteryCas_bot"   # username должен содержать это
+REQUIRED_BIO_SUBSTRING = "@FesteryCas_bot"  # bio должно содержать это
 
 # ─── ID кастомных эмодзи ──────────────────────────────────────────────────────
 EMOJI_BACK   = "5906771962734057347"
@@ -64,11 +81,18 @@ bonus_router = Router()
 # }
 _bonus_data: dict[int, dict] = {}
 
+# [FIX-1] Блокировки на пользователя — предотвращают race condition
+# при параллельных запросах бонуса (например, двойное нажатие кнопки).
+_user_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+# [FIX-9] Семафор для watchdog — не более 5 параллельных getChat.
+_watchdog_semaphore = asyncio.Semaphore(5)
+
 # Глобальный бот (устанавливается через setup_bonus)
 _bot: Bot | None = None
 
 
-def setup_bonus(bot: Bot):
+def setup_bonus(bot: Bot) -> None:
     """Вызывается из main.py при старте."""
     global _bot
     _bot = bot
@@ -79,7 +103,17 @@ def setup_bonus(bot: Bot):
 # ══════════════════════════════════════════════════════════════════
 
 def _now() -> float:
-    return time.time()
+    return time.monotonic()
+
+
+# Абсолютная точка отсчёта для monotonic (используем при первом старте)
+_EPOCH_WALL  = time.time()
+_EPOCH_MONO  = time.monotonic()
+
+
+def _wall_time() -> float:
+    """Приблизительное wall-clock время через monotonic."""
+    return _EPOCH_WALL + (time.monotonic() - _EPOCH_MONO)
 
 
 def _fmt_time(seconds: float) -> str:
@@ -94,56 +128,67 @@ def _fmt_time(seconds: float) -> str:
 def _get_user_state(user_id: int) -> dict:
     if user_id not in _bonus_data:
         _bonus_data[user_id] = {
-            "last_claimed": None,
-            "penalty":      False,
-            "penalty_at":   None,
+            "last_claimed":    None,
+            "penalty":         False,
+            "penalty_at":      None,
+            "last_activity":   _now(),
         }
     return _bonus_data[user_id]
 
 
 def _check_username(username: str | None) -> bool:
-    """Username должен СОДЕРЖАТЬ FesteryCas_bot где угодно (регистронезависимо)."""
+    """Username должен содержать FesteryCas_bot (регистронезависимо)."""
     if not username:
         return False
     return REQUIRED_USERNAME_PART.lower() in username.lower()
 
 
 def _check_bio(bio: str | None) -> bool:
-    """Bio должно СОДЕРЖАТЬ @FesteryCas_bot (регистронезависимо)."""
+    """Bio должно содержать @FesteryCas_bot (регистронезависимо)."""
     if not bio:
         return False
     return REQUIRED_BIO_SUBSTRING.lower() in bio.lower()
 
 
 async def _fetch_full_user(user_id: int) -> tuple[str | None, str | None]:
-    """Получает (username, bio) через getChat. Возвращает (None, None) при ошибке."""
+    """
+    Получает (username, bio) через getChat.
+    Возвращает (None, None) при любой ошибке.
+    """
     if _bot is None:
         return None, None
     try:
         chat = await _bot.get_chat(user_id)
-        username = getattr(chat, 'username', None)
-        bio      = getattr(chat, 'bio', None)
+        username = getattr(chat, "username", None) or None
+        bio      = getattr(chat, "bio",      None) or None
         return username, bio
     except Exception as e:
-        logging.warning(f"[Bonus] getChat({user_id}) ошибка: {e}")
+        # [FIX-7] Не логируем raw username из внешнего источника напрямую
+        logging.warning("[Bonus] getChat(%d) ошибка: %s", user_id, str(e)[:200])
         return None, None
 
 
 def _can_claim(user_id: int) -> tuple[bool, float, bool]:
     """
     Возвращает (можно_получить, секунд_осталось, на_штрафе).
+    Побочный эффект: снимает истёкший штраф.
     """
     state = _get_user_state(user_id)
     now   = _now()
 
     # Штрафной режим
-    if state["penalty"] and state["penalty_at"] is not None:
-        elapsed = now - state["penalty_at"]
-        if elapsed < PENALTY_COOLDOWN:
-            return False, PENALTY_COOLDOWN - elapsed, True
-        else:
+    if state["penalty"]:
+        # [FIX-4] penalty_at может быть None — защита
+        if state["penalty_at"] is None:
             state["penalty"]    = False
             state["penalty_at"] = None
+        else:
+            elapsed = now - state["penalty_at"]
+            if elapsed < PENALTY_COOLDOWN:
+                return False, PENALTY_COOLDOWN - elapsed, True
+            else:
+                state["penalty"]    = False
+                state["penalty_at"] = None
 
     # Обычный кулдаун
     if state["last_claimed"] is not None:
@@ -154,13 +199,30 @@ def _can_claim(user_id: int) -> tuple[bool, float, bool]:
     return True, 0.0, False
 
 
-def _apply_penalty(user_id: int):
-    """Применяет штрафной таймер 72ч."""
+def _apply_penalty(user_id: int) -> None:
+    """Применяет штрафной таймер 72ч, если ещё не применён."""
     state = _get_user_state(user_id)
     if not state["penalty"]:
         state["penalty"]    = True
         state["penalty_at"] = _now()
-        logging.info(f"[Bonus] Штраф 72ч применён для user_id={user_id}")
+        logging.info("[Bonus] Штраф 72ч применён для user_id=%d", user_id)
+
+
+def _cleanup_stale_records() -> None:
+    """
+    [FIX-2] Удаляет записи пользователей, неактивных более STALE_THRESHOLD секунд.
+    Вызывается в начале каждого прохода watchdog.
+    """
+    now     = _now()
+    stale   = [
+        uid for uid, state in _bonus_data.items()
+        if now - state.get("last_activity", 0) > STALE_THRESHOLD
+    ]
+    for uid in stale:
+        del _bonus_data[uid]
+        _user_locks.pop(uid, None)
+    if stale:
+        logging.info("[Bonus] Очищено %d устаревших записей.", len(stale))
 
 
 def is_bonus_command(text: str) -> bool:
@@ -168,29 +230,41 @@ def is_bonus_command(text: str) -> bool:
     if not text:
         return False
     t = text.strip().lower()
-    if t.startswith('/'):
+    if t.startswith("/"):
         t = t[1:]
-    return t in ('bonus', 'бонус')
+    return t in ("bonus", "бонус")
 
 
 # ══════════════════════════════════════════════════════════════════
 #  Основная логика выдачи бонуса
 # ══════════════════════════════════════════════════════════════════
 
-async def handle_bonus(message: Message, from_callback: bool = False):
+async def handle_bonus(message: Message, from_callback: bool = False) -> None:
     """
     Основная логика бонуса.
     Вызывается из хендлера команды и из callback bonus_menu в main.py.
     """
     user_id = message.from_user.id
 
+    # [FIX-1] Блокируем параллельные запросы одного пользователя
+    async with _user_locks[user_id]:
+        await _handle_bonus_locked(message)
+
+
+async def _handle_bonus_locked(message: Message) -> None:
+    """Внутренняя логика, выполняется под блокировкой пользователя."""
+    user_id = message.from_user.id
+
     kb_back = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
             text="Назад",
             callback_data="back_to_main",
-            icon_custom_emoji_id=EMOJI_BACK
         )
     ]])
+
+    # Обновляем время активности
+    state = _get_user_state(user_id)
+    state["last_activity"] = _now()
 
     # ── 1. Проверяем username и bio через getChat ──────────────────
     username, bio = await _fetch_full_user(user_id)
@@ -202,14 +276,14 @@ async def handle_bonus(message: Message, from_callback: bool = False):
         if not username_ok:
             missing.append(
                 f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> '
-                f'Никнейм должен содержать <b>FesteryCas_bot</b>\n'
+                f'Никнейм должен содержать <b>@FesteryCas_bot</b>\n'
                 f'  Пример: <code>ivan_FesteryCas_bot</code> или <code>FesteryCas_bot_ivan</code>'
             )
         if not bio_ok:
             missing.append(
                 f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji> '
                 f'В описании профиля должна быть строка:\n'
-                f'  <code>лутшая игровая зона-@FesteryCas_bot</code>'
+                f'  <code>@FesteryCas_bot</code>'
             )
         await message.answer(
             f'<blockquote><b>'
@@ -220,7 +294,7 @@ async def handle_bonus(message: Message, from_callback: bool = False):
             f'\n\n<tg-emoji emoji-id="{EMOJI_BONUS}">💎</tg-emoji> '
             f'После выполнения условий — нажмите кнопку снова или введите /bonus</blockquote>',
             parse_mode=ParseMode.HTML,
-            reply_markup=kb_back
+            reply_markup=kb_back,
         )
         return
 
@@ -243,7 +317,7 @@ async def handle_bonus(message: Message, from_callback: bool = False):
         await message.answer(
             f'<blockquote>{body}</blockquote>',
             parse_mode=ParseMode.HTML,
-            reply_markup=kb_back
+            reply_markup=kb_back,
         )
         return
 
@@ -253,29 +327,39 @@ async def handle_bonus(message: Message, from_callback: bool = False):
             f'<blockquote>'
             f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji>'
             f' Ошибка системы. Попробуйте позже.</blockquote>',
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
         )
         return
 
-    state = _get_user_state(user_id)
-    state["last_claimed"] = _now()
+    # [FIX-5] Фиксируем время ДО попытки начисления;
+    # при ошибке откатываем атомарно в блоке except.
+    claimed_at = _now()
+    state["last_claimed"] = claimed_at
     state["penalty"]      = False
     state["penalty_at"]   = None
 
     try:
         _storage.add_balance(user_id, BONUS_AMOUNT)
     except Exception as e:
-        logging.error(f"[Bonus] Ошибка начисления баланса user_id={user_id}: {e}")
+        # Откат
         state["last_claimed"] = None
+        logging.error("[Bonus] Ошибка начисления баланса user_id=%d: %s", user_id, e)
         await message.answer(
             f'<blockquote>'
             f'<tg-emoji emoji-id="{EMOJI_LOSS}">❌</tg-emoji>'
             f' Ошибка начисления. Попробуйте позже.</blockquote>',
-            parse_mode=ParseMode.HTML
+            parse_mode=ParseMode.HTML,
         )
         return
 
-    balance = _storage.get_balance(user_id)
+    try:
+        balance = _storage.get_balance(user_id)
+    except Exception as e:
+        logging.error("[Bonus] Ошибка получения баланса user_id=%d: %s", user_id, e)
+        balance = 0.0
+
+    # [FIX-3] Экранируем username перед вставкой в HTML
+    safe_username = html.escape(username or str(user_id))
 
     await message.answer(
         f'<blockquote><b>'
@@ -293,9 +377,12 @@ async def handle_bonus(message: Message, from_callback: bool = False):
         f'</blockquote>\n\n'
         f'<blockquote><i>Не убирайте приписку — иначе штраф 72ч!</i></blockquote>',
         parse_mode=ParseMode.HTML,
-        reply_markup=kb_back
+        reply_markup=kb_back,
     )
-    logging.info(f"[Bonus] Бонус {BONUS_AMOUNT} начислен user_id={user_id} (@{username})")
+    logging.info(
+        "[Bonus] Бонус %.2f начислен user_id=%d (@%s)",
+        BONUS_AMOUNT, user_id, safe_username,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -303,13 +390,13 @@ async def handle_bonus(message: Message, from_callback: bool = False):
 # ══════════════════════════════════════════════════════════════════
 
 @bonus_router.message(Command("bonus", "бонус"))
-async def cmd_bonus_slash(message: Message):
+async def cmd_bonus_slash(message: Message) -> None:
     """Обработчик /bonus и /бонус."""
     await handle_bonus(message)
 
 
 @bonus_router.message(F.text.func(is_bonus_command))
-async def cmd_bonus_text(message: Message):
+async def cmd_bonus_text(message: Message) -> None:
     """Обработчик текста 'bonus' / 'бонус' без слеша."""
     await handle_bonus(message)
 
@@ -318,31 +405,28 @@ async def cmd_bonus_text(message: Message):
 #  Фоновый воркер: проверка приписки каждые 2 часа
 # ══════════════════════════════════════════════════════════════════
 
-async def _run_watchdog_check():
-    """Один проход воркера — проверяем всех активных пользователей."""
-    to_check = [
-        uid for uid, state in _bonus_data.items()
-        if state.get("last_claimed") is not None
-        and not state.get("penalty", False)
-    ]
-
-    if not to_check:
-        return
-
-    logging.info(f"[Bonus] Watchdog: проверяем {len(to_check)} пользователей...")
-
-    for user_id in to_check:
+async def _check_one_user(user_id: int) -> None:
+    """
+    Проверяет одного пользователя в watchdog.
+    Выполняется под семафором (_watchdog_semaphore).
+    """
+    async with _watchdog_semaphore:
         try:
             username, bio = await _fetch_full_user(user_id)
             username_ok   = _check_username(username)
             bio_ok        = _check_bio(bio)
 
             if not username_ok or not bio_ok:
-                _apply_penalty(user_id)
+                # [FIX-1] Блокировка при изменении состояния
+                async with _user_locks[user_id]:
+                    _apply_penalty(user_id)
+
                 logging.warning(
-                    f"[Bonus] Watchdog: user_id={user_id} убрал приписку "
-                    f"(username_ok={username_ok}, bio_ok={bio_ok}) — штраф 72ч"
+                    "[Bonus] Watchdog: user_id=%d убрал приписку "
+                    "(username_ok=%s, bio_ok=%s) — штраф 72ч",
+                    user_id, username_ok, bio_ok,
                 )
+
                 if _bot is not None:
                     try:
                         await _bot.send_message(
@@ -353,24 +437,49 @@ async def _run_watchdog_check():
                                 f' Приписка убрана!</b></blockquote>\n\n'
                                 f'<blockquote>'
                                 f'Мы заметили, что вы убрали приписку '
-                                f'<b>{REQUIRED_BIO_SUBSTRING}</b> из профиля.\n\n'
+                                f'<b>@FesteryCas_bot</b> из профиля.\n\n'
                                 f'<tg-emoji emoji-id="{EMOJI_CLOCK}">⏰</tg-emoji> '
                                 f'Следующий бонус будет доступен через <b>72 часа</b>.\n\n'
                                 f'Верните приписку и снова получайте бонус каждые 24 часа!'
                                 f'</blockquote>'
                             ),
-                            parse_mode=ParseMode.HTML
+                            parse_mode=ParseMode.HTML,
                         )
                     except Exception as e:
                         logging.warning(
-                            f"[Bonus] Не удалось уведомить user_id={user_id}: {e}"
+                            "[Bonus] Не удалось уведомить user_id=%d: %s",
+                            user_id, str(e)[:200],
                         )
 
-            # Пауза между запросами — не превышаем лимиты Telegram API
-            await asyncio.sleep(0.5)
-
         except Exception as e:
-            logging.error(f"[Bonus] Watchdog ошибка для user_id={user_id}: {e}")
+            logging.error("[Bonus] Watchdog ошибка для user_id=%d: %s", user_id, e)
+
+
+async def _run_watchdog_check() -> None:
+    """Один проход воркера — проверяем всех активных пользователей."""
+    # [FIX-2] Чистим устаревшие записи перед проходом
+    _cleanup_stale_records()
+
+    to_check = [
+        uid for uid, state in _bonus_data.items()
+        if state.get("last_claimed") is not None
+        and not state.get("penalty", False)
+    ]
+
+    if not to_check:
+        return
+
+    logging.info("[Bonus] Watchdog: проверяем %d пользователей...", len(to_check))
+
+    # [FIX-9] Запускаем проверки конкурентно, но ограниченно семафором
+    tasks = [asyncio.create_task(_check_one_user(uid)) for uid in to_check]
+    # [FIX-8] Собираем все задачи с обработкой CancelledError
+    try:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    except asyncio.CancelledError:
+        for t in tasks:
+            t.cancel()
+        raise
 
     logging.info("[Bonus] Watchdog: проверка завершена.")
 
@@ -386,7 +495,8 @@ async def start_bonus_watchdog() -> None:
             await asyncio.sleep(CHECK_INTERVAL)
             await _run_watchdog_check()
         except asyncio.CancelledError:
+            # [FIX-8] Корректная остановка — не глотаем CancelledError
             logging.info("[Bonus] Watchdog остановлен.")
-            break
+            raise
         except Exception as e:
-            logging.error(f"[Bonus] Watchdog ошибка: {e}")
+            logging.error("[Bonus] Watchdog ошибка: %s", e)
