@@ -57,6 +57,8 @@ from bonus import (
 )
 import bonus as _bonus_module
 
+from helper import helper_router  # ← ДОБАВЛЕНО
+
 try:
     from database import init_db, import_users_from_json
 except ImportError:
@@ -154,12 +156,10 @@ def _inject_leaders_owner_fns():
     _duels_module.is_owner_fn      = _is_msg_owner
 
 
-# ========== FSM ==========
 class PromoState(StatesGroup):
     entering_code = State()
 
 
-# ========== ПРОМОКОДЫ ==========
 def load_promos() -> dict:
     if not os.path.exists(PROMO_FILE):
         return {}
@@ -216,9 +216,7 @@ def links_line() -> str:
     )
 
 
-# ========== КЛАВИАТУРЫ ==========
 def get_main_menu():
-    # Кнопка "Бонус" убрана — бонус доступен только через /bonus или текстом "бонус"
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Профиль",  callback_data="profile",   icon_custom_emoji_id=EMOJI_PROFILE),
@@ -297,7 +295,6 @@ def get_promo_cancel_menu():
     ]])
 
 
-# ========== ТЕКСТЫ ==========
 def get_main_menu_text():
     return (
         f'<blockquote><tg-emoji emoji-id="5197288647275071607">🎰</tg-emoji> <b>Честные игры — прозрачные правила и реальные шансы на победу.</b>\n'
@@ -343,7 +340,6 @@ def get_profile_text(user_first_name: str, days_in_project: int, user_id: int):
     )
 
 
-# ========== СТАРТ ==========
 @router.message(CommandStart())
 async def cmd_start(message: Message):
     try:
@@ -385,7 +381,6 @@ async def cmd_start(message: Message):
         await message.answer("Произошла ошибка. Попробуйте позже.")
 
 
-# ========== АДМИН ==========
 @router.message(F.text.startswith("/add") & ~F.text.startswith("/addpromo"))
 async def cmd_add_balance(message: Message):
     if message.from_user.id not in ADMIN_IDS:
@@ -448,7 +443,6 @@ async def cmd_add_promo(message: Message):
     )
 
 
-# ========== CALLBACK: ПРОМОКОДЫ ==========
 @router.callback_query(F.data == "promo_menu")
 async def promo_menu_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -478,7 +472,6 @@ async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== CALLBACK: ПРОФИЛЬ ==========
 @router.callback_query(F.data == "profile")
 async def profile_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -499,7 +492,6 @@ async def profile_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== CALLBACK: ИГРЫ ==========
 @router.callback_query(F.data == "games")
 async def games_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -586,7 +578,6 @@ async def handle_cancel_bet(callback: CallbackQuery, state: FSMContext):
     await cancel_bet(callback, state, betting_game)
 
 
-# ========== CALLBACK: ПОПОЛНЕНИЕ / ВЫВОД ==========
 @router.callback_query(F.data == "deposit")
 async def deposit_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -614,7 +605,6 @@ async def withdraw_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== ПЕРЕВОД ==========
 @router.message(F.text.regexp(r'(?i)^(?:/)?(?:pay|дать)\s+[\d.,]+$'))
 async def handle_transfer(message: Message, state: FSMContext):
     if not message.reply_to_message:
@@ -659,7 +649,6 @@ async def handle_transfer(message: Message, state: FSMContext):
     )
 
 
-# ========== СПЕЦИФИЧНЫЕ ТЕКСТОВЫЕ КОМАНДЫ ==========
 @router.message(F.text.regexp(r'(?i)^(?:/)?(?:mines|мины)\s+[\d.,]+\s+\d+$'))
 async def mines_command_handler(message: Message, state: FSMContext):
     await process_mines_command(message, state, storage)
@@ -696,7 +685,6 @@ async def handle_dep_command_main(message: Message, state: FSMContext):
     await _process_deposit(message, message.from_user.id, amount_override=amount)
 
 
-# ========== ГЛАВНЫЙ ОБРАБОТЧИК ТЕКСТА ==========
 @router.message(F.text)
 async def handle_text_message(message: Message, state: FSMContext):
     from payments import handle_amount_input
@@ -712,7 +700,6 @@ async def handle_text_message(message: Message, state: FSMContext):
         )
         return
 
-    # Бонус через текст — передаём user_id явно [FIX-10]
     if is_bonus_command(message.text):
         await handle_bonus(message, user_id=message.from_user.id)
         return
@@ -791,7 +778,6 @@ async def handle_text_message(message: Message, state: FSMContext):
         pass
 
 
-# ========== CALLBACK: ЛИДЕРЫ / О ПРОЕКТЕ / НАЗАД ==========
 @router.callback_query(F.data == "leaders")
 async def leaders_callback(callback: CallbackQuery, state: FSMContext):
     if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
@@ -833,7 +819,6 @@ async def back_to_main_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== ЗАПУСК ==========
 async def main():
     global betting_game
 
@@ -854,6 +839,7 @@ async def main():
     betting_game = BettingGame(bot)
 
     dp.include_router(duels_router)
+    dp.include_router(helper_router)  # ← ДОБАВЛЕНО (первым после duels чтобы /help не перехватился)
     dp.include_router(router)
     dp.include_router(mines_router)
     dp.include_router(tower_router)
