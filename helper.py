@@ -11,20 +11,20 @@ helper_router = Router()
 
 HELP_TEXT = (
     "<blockquote>"
-    "🎰 <b>FesteryCas — список команд</b>"
-    "</blockquote>\n\n"
+    '<tg-emoji emoji-id=\"5334544901428229844\">🎉</tg-emoji><b>Инструкция:</b>'
+    "</blockquote>\n"
 
     "<blockquote>"
     "💣 <b>МИНЫ</b>\n"
     "<code>/мины [сумма] [кол-во мин]</code>\n"
     "Пример: <code>/мины 1.5 3</code>"
-    "</blockquote>\n\n"
+    "</blockquote>\n"
 
     "<blockquote>"
     "🏰 <b>БАШНЯ</b>\n"
     "<code>/башня [сумма] [сложность]</code>\n"
     "Пример: <code>/башня 1.5 2</code>"
-    "</blockquote>\n\n"
+    "</blockquote>\n"
 
     "<blockquote>"
     "🎲 <b>ОБЫЧНЫЕ ИГРЫ</b>\n\n"
@@ -43,7 +43,7 @@ HELP_TEXT = (
     "🎳 Боулинг\n"
     "<code>/боул [исход] [сумма]</code>\n"
     "Исходы: <code>страйк</code> / <code>мимо</code>"
-    "</blockquote>\n\n"
+    "</blockquote>\n"
 
     "<blockquote>"
     "⚔️ <b>ДУЭЛИ</b>\n\n"
@@ -52,10 +52,10 @@ HELP_TEXT = (
     "🏀 <code>/basketx3 [сумма]</code>\n"
     "⚽️ <code>/footx3 [сумма]</code>\n"
     "🎯 <code>/dartx3 [сумма]</code>"
-    "</blockquote>\n\n"
+    "</blockquote>\n"
 
     "<blockquote>"
-    "⚡️ <b>БЫСТРЫЕ КОМАНДЫ</b>\n\n"
+    '<tg-emoji emoji-id=\"5323442290708985472\">🎉</tg-emoji><b>БЫСТРЫЕ КОМАНДЫ</b>\n\n'
     "<code>b</code> / <code>bal</code> / <code>balance</code> — баланс\n"
     "<code>games</code> / <code>игры</code> — меню игр\n"
     "<code>/bonus</code> — ежедневный бонус"
