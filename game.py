@@ -426,33 +426,8 @@ async def handle_text_bet_command(message: Message, betting_game: BettingGame):
     
     if not parsed:
         await message.answer(
-            "❌ <b>Неверный формат команды!</b>\n\n"
-            "<blockquote>"
-            "📝 <b>Примеры команд:</b>\n\n"
-            "<b>⚽ Футбол:</b>\n"
-            "<code>фут гол 5</code>\n"
-            "<code>фут мимо 10</code>\n\n"
-            "<b>🏀 Баскетбол:</b>\n"
-            "<code>баскет гол 10</code>\n"
-            "<code>баскет 3очка 20</code>\n"
-            "<code>баскет мимо 15</code>\n\n"
-            "<b>🎲 Кубик:</b>\n"
-            "<code>куб нечет 20</code>\n"
-            "<code>куб чет 30</code>\n"
-            "<code>куб больше 50</code>\n"
-            "<code>куб 2больше 100</code>\n"
-            "<code>куб 1 50</code> (точное число)\n\n"
-            "<b>🎯 Дартс:</b>\n"
-            "<code>дартс белое 10</code>\n"
-            "<code>дартс красное 15</code>\n"
-            "<code>дартс центр 25</code>\n"
-            "<code>дартс мимо 20</code>\n\n"
-            "<b>🎳 Боулинг:</b>\n"
-            "<code>боулинг победа 10</code>\n"
-            "<code>боулинг поражение 15</code>\n"
-            "<code>боулинг страйк 50</code>\n\n"                                    
-            "🌐 Команды работают на русском и английском!"            
-            "</blockquote>",
+            "<blockquote>❌<b>Неверный формат команды!</b>\n\n"
+            "Используйте /help для уточнения!</blockquote>",
             parse_mode='HTML'
         )
         return
