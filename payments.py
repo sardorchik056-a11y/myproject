@@ -35,6 +35,12 @@ load_dotenv()
 CRYPTO_BOT_TOKEN = os.getenv('CRYPTO_BOT_TOKEN')
 CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
 
+# Проверка наличия токена
+if not CRYPTO_BOT_TOKEN:
+    logging.critical("CRITICAL: CRYPTO_BOT_TOKEN не найден в переменных окружения!")
+    logging.critical("Убедись, что в файле .env есть строка: CRYPTO_BOT_TOKEN=твой_токен")
+    raise ValueError("CRYPTO_BOT_TOKEN не найден в переменных окружения!")
+
 # Минимальные суммы
 MIN_DEPOSIT = 0.1
 MIN_WITHDRAWAL = 2.0
@@ -383,7 +389,9 @@ class CryptoBotAPI:
             return None
 
 
-crypto_api = CryptoBotAPI(CRYPTOBOT_API_KEY)
+# ========== ИНИЦИАЛИЗАЦИЯ CRYPTOBOT API ==========
+# Используем токен из переменных окружения
+crypto_api = CryptoBotAPI(CRYPTO_BOT_TOKEN)
 
 
 # ========== ФОНОВАЯ ПРОВЕРКА ОПЛАТЫ ==========
