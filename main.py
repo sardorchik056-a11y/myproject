@@ -647,7 +647,7 @@ async def handle_transfer(message: Message, state: FSMContext):
         storage.add_balance(target.id, amount)
     await message.reply(
         f'<tg-emoji emoji-id="5206607081334906820">💸</tg-emoji><b>Перевод выполнен!</b>\n\n<blockquote>'
-        f'<tg-emoji emoji-id="5195033767969839232">💸</tg-emoji>Вы отправили <code>{amount:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💸</tg-emoji> игроку <b>{target.first_name or 'Игрок'}</b></blockquote>',
+        f'<tg-emoji emoji-id="5195033767969839232">💸</tg-emoji>Вы отправили <code>{amount:,.2f}</code><tg-emoji emoji-id="5197434882321567830">💸</tg-emoji> игроку <b>{target.first_name or "Игрок"}</b></blockquote>',
         parse_mode=ParseMode.HTML
     )
 
