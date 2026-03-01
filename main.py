@@ -11,6 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from dotenv import load_dotenv
 
 from payments import payment_router, setup_payments, storage, MIN_DEPOSIT, MIN_WITHDRAWAL
 from game import (
@@ -65,7 +66,9 @@ except ImportError:
     async def init_db(): pass
     async def import_users_from_json(): pass
 
-BOT_TOKEN = "8531951028:AAFWUlHwpWfRrD2MvT4BqtexO7nFsQwFpcA"
+load_dotenv()
+
+BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 LINK_NEWS     = "https://t.me/FesteryNews"
 LINK_CHAT     = "https://t.me/FesteryCasChat"
