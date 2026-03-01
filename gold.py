@@ -273,7 +273,7 @@ def game_text(session: dict) -> str:
     floor_num     = session['current_floor'] + 1
 
     return (
-        f"<blockquote><b><tg-emoji emoji-id="{EMOJI_WIN}">💰</tg-emoji>Золото</b></blockquote>\n\n"
+        f'<blockquote><b><tg-emoji emoji-id="{EMOJI_WIN}">💰</tg-emoji>Золото</b></blockquote>\n\n'
         f"<blockquote>"
         f'<tg-emoji emoji-id="{EMOJI_BET}">💰</tg-emoji>Ставка: <code>{bet}</code><tg-emoji emoji-id="{EMOJI_COIN}">💰</tg-emoji>\n'
         f'<tg-emoji emoji-id="{EMOJI_FLOOR}">🏗</tg-emoji>Уровень: <b>{floor_num}/{FLOORS}</b>\n'
