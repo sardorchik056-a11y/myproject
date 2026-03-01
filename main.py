@@ -48,7 +48,6 @@ from duels import (
 )
 import duels as _duels_module
 
-# ── Бонусная система ──────────────────────────────────────────────────────────
 from bonus import (
     bonus_router,
     setup_bonus,
@@ -219,6 +218,7 @@ def links_line() -> str:
 
 # ========== КЛАВИАТУРЫ ==========
 def get_main_menu():
+    # Кнопка "Бонус" убрана — бонус доступен только через /bonus или текстом "бонус"
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="Профиль",  callback_data="profile",   icon_custom_emoji_id=EMOJI_PROFILE),
@@ -231,9 +231,6 @@ def get_main_menu():
         [
             InlineKeyboardButton(text="Промокоды", callback_data="promo_menu",  icon_custom_emoji_id=EMOJI_PROMO),
             InlineKeyboardButton(text="О проекте", callback_data="about",       icon_custom_emoji_id=EMOJI_ABOUT)
-        ],
-        [
-            InlineKeyboardButton(text="Бонус", callback_data="bonus_menu", icon_custom_emoji_id=EMOJI_BONUS)
         ],
         [
             InlineKeyboardButton(text="Инструкция", url=LINK_INSTRUCT, icon_custom_emoji_id=EMOJI_INSTRUCT)
@@ -481,19 +478,6 @@ async def promo_enter_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-# ========== CALLBACK: БОНУС ==========
-@router.callback_query(F.data == "bonus_menu")
-async def bonus_menu_callback(callback: CallbackQuery, state: FSMContext):
-    if not _is_msg_owner(callback.message.message_id, callback.from_user.id):
-        await callback.answer("🚫 Это не ваша кнопка!", show_alert=True)
-        return
-    await state.clear()
-    # Создаём фиктивное сообщение-обёртку: передаём callback.message как Message
-    # handle_bonus работает с Message, поэтому вызываем через answer
-    await callback.answer()
-    await handle_bonus(callback.message, from_callback=True)
-
-
 # ========== CALLBACK: ПРОФИЛЬ ==========
 @router.callback_query(F.data == "profile")
 async def profile_callback(callback: CallbackQuery, state: FSMContext):
@@ -717,7 +701,6 @@ async def handle_dep_command_main(message: Message, state: FSMContext):
 async def handle_text_message(message: Message, state: FSMContext):
     from payments import handle_amount_input
 
-    # Баланс
     if is_balance_command(message.text):
         balance = sync_balances(message.from_user.id)
         await message.reply(
@@ -729,9 +712,9 @@ async def handle_text_message(message: Message, state: FSMContext):
         )
         return
 
-    # Бонус (текстовая команда без слеша)
+    # Бонус через текст — передаём user_id явно [FIX-10]
     if is_bonus_command(message.text):
-        await handle_bonus(message)
+        await handle_bonus(message, user_id=message.from_user.id)
         return
 
     if is_mygames_command(message.text):
@@ -744,7 +727,6 @@ async def handle_text_message(message: Message, state: FSMContext):
 
     current_state = await state.get_state()
 
-    # Промокод
     if current_state == PromoState.entering_code.state:
         code = message.text.strip()
         ok, amount, reason = promo_use(code, message.from_user.id)
@@ -774,37 +756,30 @@ async def handle_text_message(message: Message, state: FSMContext):
             )
         return
 
-    # Реферальный вывод
     if current_state == ReferralWithdraw.entering_amount.state:
         await ref_withdraw_amount(message, state)
         return
 
-    # Мины
     if current_state == MinesGame.choosing_bet:
         await process_mines_bet(message, state, storage)
         return
 
-    # Башня
     if current_state == TowerGame.choosing_bet:
         await process_tower_bet(message, state, storage)
         return
 
-    # Золото
     if current_state == GoldGame.choosing_bet.state:
         await process_gold_bet(message, state, storage)
         return
 
-    # Дуэли
     if is_duel_command(message.text):
         await handle_duel_command(message)
         return
 
-    # Ставки в обычных играх
     if is_bet_command(message.text):
         await handle_text_bet_command(message, betting_game)
         return
 
-    # Числовой ввод
     try:
         float(message.text)
         if current_state:
@@ -878,8 +853,6 @@ async def main():
 
     betting_game = BettingGame(bot)
 
-    # ── Подключаем роутеры ────────────────────────────────────────
-    # ВАЖНО: duels_router первым — F.dice перехватывается раньше всех
     dp.include_router(duels_router)
     dp.include_router(router)
     dp.include_router(mines_router)
@@ -890,14 +863,12 @@ async def main():
     dp.include_router(leaders_router)
     dp.include_router(bonus_router)
 
-    # ── Инициализация модулей ─────────────────────────────────────
     setup_payments(bot)
     setup_referrals(bot)
     setup_duels(bot, storage)
-    setup_bonus(bot)           # ← бонус: передаём бота
+    setup_bonus(bot)
     _inject_leaders_owner_fns()
 
-    # ── Фоновый воркер бонуса (проверка приписки каждые 2ч) ──────
     asyncio.create_task(start_bonus_watchdog())
 
     await bot.delete_webhook(drop_pending_updates=True)
