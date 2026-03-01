@@ -4,10 +4,12 @@ bonus.py — Бонусная система Telegram-казино.
 Механика:
   - Бонус 0.1 монеты каждые 24 часа.
   - Требование:
-      • В НИКНЕЙМЕ (first_name) должна быть строка "@FesteryCas_bot" (где угодно).
-      • В BIO должна быть строка "честная игровая зона-@FesteryCas_bot" (где угодно).
-  - Если после получения бонуса приписка убрана — штраф 72 часа.
-  - Каждые 2 часа воркер проверяет всех получивших бонус.
+      • В НИКНЕЙМЕ (first_name) должна быть строка "@FesteryCas_bot".
+      • В BIO должна быть строка "честная игровая зона-@FesteryCas_bot".
+  - Проверка через прямой HTTP-запрос к Bot API (aiohttp) —
+    обходит ограничения aiogram где bio возвращается как None.
+  - Штраф 72ч при снятии приписки.
+  - Воркер проверяет каждые 2 часа.
 
 Команды: /bonus | /бонус | bonus | бонус
 
@@ -17,11 +19,11 @@ bonus.py — Бонусная система Telegram-казино.
   - [FIX-3]  HTML-инъекция: html.escape для first_name.
   - [FIX-4]  penalty_at=None при penalty=True — защита от NPE.
   - [FIX-5]  Атомарный откат last_claimed при ошибке начисления.
-  - [FIX-6]  Нормализация пустых строк из getChat.
   - [FIX-7]  Безопасное логирование внешних данных.
   - [FIX-8]  Watchdog корректно пробрасывает CancelledError.
-  - [FIX-9]  Семафор на параллельные getChat в watchdog.
+  - [FIX-9]  Семафор на параллельные запросы в watchdog.
   - [FIX-10] handle_bonus принимает явный user_id (callback fix).
+  - [FIX-11] Bio читается через сырой aiohttp запрос — надёжнее aiogram getChat.
 """
 
 import asyncio
@@ -29,6 +31,8 @@ import html
 import logging
 import time
 from collections import defaultdict
+
+import aiohttp
 
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
@@ -72,11 +76,14 @@ _bonus_data: dict[int, dict] = {}
 _user_locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)  # [FIX-1]
 _watchdog_semaphore = asyncio.Semaphore(5)                         # [FIX-9]
 _bot: Bot | None = None
+_bot_token: str | None = None
 
 
 def setup_bonus(bot: Bot) -> None:
-    global _bot
+    global _bot, _bot_token
     _bot = bot
+    # Достаём токен из объекта бота для прямых HTTP-запросов
+    _bot_token = bot.token
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -106,30 +113,70 @@ def _get_user_state(user_id: int) -> dict:
 
 
 def _check_name(text: str | None) -> bool:
-    """Никнейм должен содержать @FesteryCas_bot (регистронезависимо, позиция любая)."""
+    """Никнейм содержит @FesteryCas_bot (регистронезависимо, позиция любая)."""
     if not text or not text.strip():
         return False
     return REQUIRED_NAME_SUBSTRING.lower() in text.strip().lower()
 
 
 def _check_bio(text: str | None) -> bool:
-    """Bio должно содержать 'честная игровая зона-@FesteryCas_bot' (регистронезависимо, позиция любая)."""
+    """Bio содержит 'честная игровая зона-@FesteryCas_bot' (регистронезависимо, позиция любая)."""
     if not text or not text.strip():
         return False
     return REQUIRED_BIO_SUBSTRING.lower() in text.strip().lower()
 
 
 async def _fetch_user_info(user_id: int) -> tuple[str | None, str | None]:
-    """Получает (first_name, bio) через getChat. Возвращает (None, None) при ошибке."""
-    if _bot is None:
+    """
+    [FIX-11] Получает (first_name, bio) через прямой HTTP-запрос к Bot API.
+
+    Почему не aiogram getChat:
+      - aiogram парсит ответ через модели Pydantic и в некоторых версиях
+        отбрасывает поле bio для User (оно есть только в Chat).
+      - Прямой запрос возвращает сырой JSON где bio всегда присутствует
+        если пользователь его установил.
+    """
+    if _bot_token is None:
+        logging.warning("[Bonus] _bot_token не установлен — вызови setup_bonus(bot) при старте")
         return None, None
+
+    url = f"https://api.telegram.org/bot{_bot_token}/getChat"
+    params = {"chat_id": user_id}
+
     try:
-        chat       = await _bot.get_chat(user_id)
-        first_name = getattr(chat, "first_name", None) or None  # [FIX-6]
-        bio        = getattr(chat, "bio",        None) or None  # [FIX-6]
-        return first_name, bio
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status != 200:
+                    logging.warning("[Bonus] getChat HTTP %d для user_id=%d", resp.status, user_id)
+                    return None, None
+
+                data = await resp.json()
+
+                if not data.get("ok"):
+                    logging.warning(
+                        "[Bonus] getChat error для user_id=%d: %s",
+                        user_id, str(data.get("description", ""))[:200]  # [FIX-7]
+                    )
+                    return None, None
+
+                result     = data["result"]
+                first_name = result.get("first_name") or None
+                bio        = result.get("bio") or None
+
+                logging.debug(
+                    "[Bonus] user_id=%d first_name=%r bio=%r",
+                    user_id,
+                    (first_name or "")[:50],
+                    (bio or "")[:100],
+                )
+
+                return first_name, bio
+
+    except asyncio.TimeoutError:
+        logging.warning("[Bonus] getChat timeout для user_id=%d", user_id)
+        return None, None
     except Exception as e:
-        logging.warning("[Bonus] getChat(%d) ошибка: %s", user_id, str(e)[:200])  # [FIX-7]
+        logging.warning("[Bonus] getChat exception для user_id=%d: %s", user_id, str(e)[:200])  # [FIX-7]
         return None, None
 
 
@@ -191,8 +238,7 @@ def is_bonus_command(text: str) -> bool:
 
 async def handle_bonus(message: Message, user_id: int | None = None) -> None:
     """
-    [FIX-10] Принимает явный user_id — критично при вызове из callback,
-    где message.from_user — это бот, а не пользователь.
+    [FIX-10] Принимает явный user_id — критично при вызове из callback.
 
     Из команды:  await handle_bonus(message)
     Из callback: await handle_bonus(callback.message, user_id=callback.from_user.id)
@@ -208,7 +254,7 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
     state = _get_user_state(user_id)
     state["last_activity"] = _now()
 
-    # ── 1. Получаем first_name и bio ─────────────────────────────
+    # ── 1. Получаем first_name и bio через сырой HTTP-запрос ──────
     first_name, bio = await _fetch_user_info(user_id)
 
     name_ok = _check_name(first_name)
@@ -369,7 +415,10 @@ async def _check_one_user(user_id: int) -> None:
                             parse_mode=ParseMode.HTML,
                         )
                     except Exception as e:
-                        logging.warning("[Bonus] Не удалось уведомить user_id=%d: %s", user_id, str(e)[:200])
+                        logging.warning(
+                            "[Bonus] Не удалось уведомить user_id=%d: %s",
+                            user_id, str(e)[:200],
+                        )
 
         except Exception as e:
             logging.error("[Bonus] Watchdog ошибка user_id=%d: %s", user_id, e)
