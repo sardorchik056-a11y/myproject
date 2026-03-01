@@ -257,6 +257,7 @@ def _duel_card_text(duel: dict, *, extra: str = "") -> str:
             f'<tg-emoji emoji-id="5231200819986047254">👤</tg-emoji> <b>Счёт:</b>\n'
             f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p1t}: {fmt(duel["player1_scores"])}\n'
             f'<tg-emoji emoji-id="5906581476639513176">👤</tg-emoji> {p2t}: {fmt(duel["player2_scores"])}'
+            f"<b><i>Отправьте смайлик (эмодзи) в ответ на это сообщение!</i></b>"
             f"</blockquote>"
         )
 
