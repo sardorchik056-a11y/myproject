@@ -631,9 +631,9 @@ async def handle_transfer(message: Message, state: FSMContext):
     except ValueError:
         await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML); return
     if amount < MIN_TRANSFER:
-        await message.reply(f"<blockquote>❌<b>Мин. сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>", parse_mode=ParseMode.HTML); return
+        await message.reply(f'<blockquote>❌<b>Мин. сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>', parse_mode=ParseMode.HTML); return
     if amount > MAX_TRANSFER:
-        await message.reply(f"<blockquote>❌<b>Макс. сумма перевода: <code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>", parse_mode=ParseMode.HTML); return
+        await message.reply(f'<blockquote>❌<b>Макс. сумма перевода: <code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>', parse_mode=ParseMode.HTML); return
     if storage.get_balance(message.from_user.id) < amount:
         await message.reply("<blockquote>❌<b>Недостаточно средств!</b></blockquote>", parse_mode=ParseMode.HTML); return
     lock = _get_transfer_lock(message.from_user.id)
