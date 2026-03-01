@@ -48,7 +48,7 @@ EMOJI_TROPHY = "5461151367559141950"
 EMOJI_BONUS  = "5443127283898405358"
 EMOJI_WARN   = "5210952531676504517"
 EMOJI_SHIELD = "5906986955911993888"
-
+EMOJI_ERROR = "5420323339723881652"
 bonus_router = Router()
 
 _bonus_data: dict[int, dict] = {}
@@ -202,7 +202,7 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
         safe_fn = html.escape(first_name or "не удалось получить")
         await message.answer(
             "<blockquote><b>"
-            "<tg-emoji emoji-id=\"" + EMOJI_SHIELD + "\">🛡</tg-emoji>"
+            "<tg-emoji emoji-id=\"" + EMOJI_ERROR + "\">🛡</tg-emoji>"
             " Бонус недоступен</b></blockquote>\n\n"
             "<blockquote>"
             "Для получения бонуса выполни оба условия:\n\n"
@@ -212,8 +212,7 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
             "<tg-emoji emoji-id=\"" + EMOJI_LOSS + "\">❌</tg-emoji> "
             "В <b>«О себе»</b> должна быть:\n"
             "  <code>честная игровая зона-@FesteryCas_bot</code>\n\n"
-            "Твой текущий ник: <code>" + safe_fn + "</code>\n\n"
-            "После выполнения введи /bonus снова</blockquote>",
+            "После выполнения введите /bonus снова!</blockquote>",
             parse_mode=ParseMode.HTML,
         )
         return
