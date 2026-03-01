@@ -439,9 +439,9 @@ async def cmd_add_promo(message: Message):
         return
     await message.answer(
         f'✅ <b>Промокод создан!</b>\n\n<blockquote>'
-        f'Код: <code>{code}</code>\n'
-        f'Сумма: <b><code>{amount:.2f}</code>💰</b>\n'
-        f'Активаций: <b><code>{activations}</code></b></blockquote>',
+        f'<tg-emoji emoji-id="5262517101578443800">🎰</tg-emoji>Код: <code>{code}</code>\n'
+        f'<tg-emoji emoji-id="5197288647275071607">🎰</tg-emoji>Сумма: <b><code>{amount:.2f}</code></b>\n'
+        f'<tg-emoji emoji-id="5197288647275071607">🎰</tg-emoji>Активаций: <b><code>{activations}</code></b></blockquote>',
         parse_mode=ParseMode.HTML
     )
 
@@ -631,9 +631,9 @@ async def handle_transfer(message: Message, state: FSMContext):
     except ValueError:
         await message.reply("<blockquote>❌<b>Неверный формат суммы!</b></blockquote>", parse_mode=ParseMode.HTML); return
     if amount < MIN_TRANSFER:
-        await message.reply(f"<blockquote>❌<b>Мин. сумма перевода: <code>{MIN_TRANSFER}</code>💰</b></blockquote>", parse_mode=ParseMode.HTML); return
+        await message.reply(f"<blockquote>❌<b>Мин. сумма перевода: <code>{MIN_TRANSFER}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>", parse_mode=ParseMode.HTML); return
     if amount > MAX_TRANSFER:
-        await message.reply(f"<blockquote>❌<b>Макс. сумма перевода: <code>{MAX_TRANSFER:,.0f}</code>💰</b></blockquote>", parse_mode=ParseMode.HTML); return
+        await message.reply(f"<blockquote>❌<b>Макс. сумма перевода: <code>{MAX_TRANSFER:,.0f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>", parse_mode=ParseMode.HTML); return
     if storage.get_balance(message.from_user.id) < amount:
         await message.reply("<blockquote>❌<b>Недостаточно средств!</b></blockquote>", parse_mode=ParseMode.HTML); return
     lock = _get_transfer_lock(message.from_user.id)
@@ -727,8 +727,8 @@ async def handle_text_message(message: Message, state: FSMContext):
             await state.clear()
             await message.answer(
                 f'✅ <b>Промокод активирован!</b>\n\n<blockquote>'
-                f'Начислено: <b><code>+{amount:.2f}</code>💰</b>\n'
-                f'Баланс: <b><code>{new_balance:.2f}</code>💰</b></blockquote>',
+                f'Начислено: <b><code>+{amount:.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b>\n'
+                f'<tg-emoji emoji-id="5278467510604160626">💰</tg-emoji>: <b><code>{new_balance:.2f}</code><tg-emoji emoji-id="5197434882321567830">💰</tg-emoji></b></blockquote>',
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                     InlineKeyboardButton(text="На главную", callback_data="back_to_main", icon_custom_emoji_id=EMOJI_BACK)
