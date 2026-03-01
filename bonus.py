@@ -1,8 +1,15 @@
 """
 bonus.py - Бонусная система Telegram-казино.
 
-Проверка через прямой HTTP-запрос (aiohttp) к Bot API - надёжнее aiogram getChat.
-Команды: /bonus | /bonusdebug
+Логика:
+  - Проверяется ТОЛЬКО никнейм (first_name) через getChat - работает надёжно.
+  - Bio НЕ проверяется технически, но в требованиях показываем что надо
+    поставить и в «О себе» - большинство поставят оба условия.
+  - Бонус 0.1 монеты каждые 24 часа.
+  - Штраф 72ч если убрал приписку из ника.
+  - Воркер проверяет ник каждые 2 часа.
+
+Команды: /bonus | /бонус | bonus | бонус
 """
 
 import asyncio
@@ -24,14 +31,14 @@ except ImportError:
     _storage = None
     logging.warning("[Bonus] payments.py не найден.")
 
-BONUS_AMOUNT      = 0.1
-BONUS_COOLDOWN    = 24 * 3600
-PENALTY_COOLDOWN  = 72 * 3600
-CHECK_INTERVAL    = 2  * 3600
-STALE_THRESHOLD   = 30 * 86400
+BONUS_AMOUNT     = 0.1
+BONUS_COOLDOWN   = 24 * 3600
+PENALTY_COOLDOWN = 72 * 3600
+CHECK_INTERVAL   = 2  * 3600
+STALE_THRESHOLD  = 30 * 86400
 
+# Проверяем ТОЛЬКО это (в никнейме)
 REQUIRED_NAME_SUBSTRING = "@FesteryCas_bot"
-REQUIRED_BIO_SUBSTRING  = "честная игровая зона-@FesteryCas_bot"
 
 EMOJI_COIN   = "5197434882321567830"
 EMOJI_WIN    = "5278467510604160626"
@@ -79,64 +86,33 @@ def _get_user_state(user_id: int) -> dict:
     return _bonus_data[user_id]
 
 
-def _check_name(text: str | None) -> bool:
-    if not text or not text.strip():
+def _check_name(first_name: str | None) -> bool:
+    if not first_name or not first_name.strip():
         return False
-    return REQUIRED_NAME_SUBSTRING.lower() in text.strip().lower()
+    return REQUIRED_NAME_SUBSTRING.lower() in first_name.strip().lower()
 
 
-def _check_bio(text: str | None) -> bool:
-    if not text or not text.strip():
-        return False
-    return REQUIRED_BIO_SUBSTRING.lower() in text.strip().lower()
-
-
-async def _fetch_user_info(user_id: int) -> tuple[str | None, str | None]:
-    """Прямой HTTP-запрос к Bot API - обходит ограничения aiogram."""
+async def _fetch_first_name(user_id: int) -> str | None:
+    """Получает first_name через прямой HTTP-запрос к Bot API."""
     if _bot_token is None:
-        logging.warning("[Bonus] _bot_token не установлен")
-        return None, None
-
+        return None
     url = f"https://api.telegram.org/bot{_bot_token}/getChat"
-    params = {"chat_id": user_id}
-
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(
-                url, params=params,
+                url,
+                params={"chat_id": user_id},
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
                 if resp.status != 200:
-                    logging.warning("[Bonus] getChat HTTP %d user_id=%d", resp.status, user_id)
-                    return None, None
-
+                    return None
                 data = await resp.json()
-
                 if not data.get("ok"):
-                    desc = str(data.get("description", ""))[:200]
-                    logging.warning("[Bonus] getChat error user_id=%d: %s", user_id, desc)
-                    return None, None
-
-                result     = data["result"]
-                first_name = result.get("first_name") or None
-                bio        = result.get("bio") or None
-
-                logging.info(
-                    "[Bonus] getChat user_id=%d | first_name=%r | bio=%r | keys=%s",
-                    user_id,
-                    (first_name or "")[:80],
-                    (bio or "")[:200],
-                    list(result.keys()),
-                )
-
-                return first_name, bio
-
-    except asyncio.TimeoutError:
-        logging.warning("[Bonus] getChat timeout user_id=%d", user_id)
-        return None, None
+                    return None
+                return data["result"].get("first_name") or None
     except Exception as e:
         logging.warning("[Bonus] getChat exception user_id=%d: %s", user_id, str(e)[:200])
-        return None, None
+        return None
 
 
 def _can_claim(user_id: int) -> tuple[bool, float, bool]:
@@ -179,46 +155,16 @@ def _cleanup_stale_records() -> None:
         del _bonus_data[uid]
         _user_locks.pop(uid, None)
     if stale:
-        logging.info("[Bonus] Очищено %d устаревших записей.", len(stale))
+        logging.info("[Bonus] Очищено %d записей.", len(stale))
 
 
 def is_bonus_command(text: str) -> bool:
     if not text:
         return False
-    t = text.strip().lower().lstrip("/")
-    return t in ("bonus", "бонус")
+    return text.strip().lower().lstrip("/") in ("bonus", "бонус")
 
 
-# ── Диагностическая команда ───────────────────────────────────────────────────
-
-@bonus_router.message(Command("bonusdebug"))
-async def cmd_bonus_debug(message: Message) -> None:
-    """Показывает что именно видит бот в профиле пользователя."""
-    user_id = message.from_user.id
-    first_name, bio = await _fetch_user_info(user_id)
-    name_ok = _check_name(first_name)
-    bio_ok  = _check_bio(bio)
-    fn_safe = html.escape(first_name or "None")
-    b_safe  = html.escape(bio or "None")
-    rn_safe = html.escape(REQUIRED_NAME_SUBSTRING)
-    rb_safe = html.escape(REQUIRED_BIO_SUBSTRING)
-    text = (
-        "<b>Диагностика профиля</b>\n\n"
-        "<blockquote>"
-        "<b>first_name (никнейм):</b>\n"
-        "<code>" + fn_safe + "</code>\n"
-        "name_ok = <b>" + str(name_ok) + "</b>\n\n"
-        "<b>bio (о себе):</b>\n"
-        "<code>" + b_safe + "</code>\n"
-        "bio_ok = <b>" + str(bio_ok) + "</b>\n\n"
-        "<b>Ищем в нике:</b> <code>" + rn_safe + "</code>\n"
-        "<b>Ищем в bio:</b> <code>" + rb_safe + "</code>"
-        "</blockquote>"
-    )
-    await message.answer(text, parse_mode=ParseMode.HTML)
-
-
-# ── Основная логика ───────────────────────────────────────────────────────────
+# ── Основная логика ───────────────────────────────────────────────
 
 async def handle_bonus(message: Message, user_id: int | None = None) -> None:
     actual_user_id = user_id if user_id is not None else message.from_user.id
@@ -230,58 +176,49 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
     state = _get_user_state(user_id)
     state["last_activity"] = _now()
 
-    first_name, bio = await _fetch_user_info(user_id)
-    name_ok = _check_name(first_name)
-    bio_ok  = _check_bio(bio)
-
-    if not name_ok or not bio_ok:
-        missing = []
-        if not name_ok:
-            missing.append(
-                "<tg-emoji emoji-id=\"" + EMOJI_LOSS + "\">❌</tg-emoji> "
-                "В <b>никнейме</b> должна быть приписка "
-                "<code>@FesteryCas_bot</code>\n"
-                "  Пример: <code>Иван @FesteryCas_bot</code>"
-            )
-        if not bio_ok:
-            missing.append(
-                "<tg-emoji emoji-id=\"" + EMOJI_LOSS + "\">❌</tg-emoji> "
-                "В <b>«О себе»</b> должна быть строка:\n"
-                "  <code>честная игровая зона-@FesteryCas_bot</code>"
-            )
-        await message.answer(
-            "<blockquote><b>"
-            "<tg-emoji emoji-id=\"" + EMOJI_SHIELD + "\">🛡</tg-emoji>"
-            " Бонус недоступен</b></blockquote>\n\n"
-            "<blockquote>Для получения бонуса необходимо:\n\n"
-            + "\n\n".join(missing)
-            + "\n\n<tg-emoji emoji-id=\"" + EMOJI_BONUS + "\">💎</tg-emoji> "
-            "После выполнения условий введите /bonus снова</blockquote>",
-            parse_mode=ParseMode.HTML,
-        )
-        return
-
+    # ── Проверяем кулдаун сначала (без лишних запросов к API) ────
     can, remaining, is_penalty = _can_claim(user_id)
-
     if not can:
-        if is_penalty:
-            body = (
-                "<tg-emoji emoji-id=\"" + EMOJI_WARN + "\">⚠️</tg-emoji> "
-                "<b>Вы убрали приписку — действует штраф!</b>\n\n"
-                "Бонус будет доступен через: <b>" + _fmt_time(remaining) + "</b>"
-            )
-        else:
-            body = (
-                "<tg-emoji emoji-id=\"" + EMOJI_CLOCK + "\">⏰</tg-emoji> "
-                "<b>Бонус уже получен!</b>\n\n"
-                "Следующий бонус через: <b>" + _fmt_time(remaining) + "</b>"
-            )
+        body = (
+            "<tg-emoji emoji-id=\"" + EMOJI_WARN + "\">⚠️</tg-emoji> "
+            "<b>Вы убрали приписку — действует штраф!</b>\n\n"
+            "Бонус будет доступен через: <b>" + _fmt_time(remaining) + "</b>"
+        ) if is_penalty else (
+            "<tg-emoji emoji-id=\"" + EMOJI_CLOCK + "\">⏰</tg-emoji> "
+            "<b>Бонус уже получен!</b>\n\n"
+            "Следующий бонус через: <b>" + _fmt_time(remaining) + "</b>"
+        )
         await message.answer(
             "<blockquote>" + body + "</blockquote>",
             parse_mode=ParseMode.HTML,
         )
         return
 
+    # ── Проверяем никнейм ────────────────────────────────────────
+    first_name = await _fetch_first_name(user_id)
+    name_ok    = _check_name(first_name)
+
+    if not name_ok:
+        safe_fn = html.escape(first_name or "не удалось получить")
+        await message.answer(
+            "<blockquote><b>"
+            "<tg-emoji emoji-id=\"" + EMOJI_SHIELD + "\">🛡</tg-emoji>"
+            " Бонус недоступен</b></blockquote>\n\n"
+            "<blockquote>"
+            "Для получения бонуса выполни оба условия:\n\n"
+            "<tg-emoji emoji-id=\"" + EMOJI_LOSS + "\">❌</tg-emoji> "
+            "В <b>никнейме</b> должна быть: <code>@FesteryCas_bot</code>\n"
+            "  Пример: <code>Иван @FesteryCas_bot</code>\n\n"
+            "<tg-emoji emoji-id=\"" + EMOJI_LOSS + "\">❌</tg-emoji> "
+            "В <b>«О себе»</b> должна быть:\n"
+            "  <code>честная игровая зона-@FesteryCas_bot</code>\n\n"
+            "Твой текущий ник: <code>" + safe_fn + "</code>\n\n"
+            "После выполнения введи /bonus снова</blockquote>",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    # ── Начисляем ────────────────────────────────────────────────
     if _storage is None:
         await message.answer(
             "<blockquote>"
@@ -315,6 +252,7 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
         balance = 0.0
 
     safe_name = html.escape(first_name or str(user_id))
+    logging.info("[Bonus] Бонус %.2f начислен user_id=%d name=%s", BONUS_AMOUNT, user_id, safe_name)
 
     await message.answer(
         "<blockquote><b>"
@@ -330,13 +268,12 @@ async def _handle_bonus_locked(message: Message, user_id: int) -> None:
         "<tg-emoji emoji-id=\"" + EMOJI_CLOCK + "\">⏰</tg-emoji>"
         " Следующий бонус через <b>24 часа</b>"
         "</blockquote>\n\n"
-        "<blockquote><i>Не убирайте приписку — иначе штраф 72ч!</i></blockquote>",
+        "<blockquote><i>Не убирайте приписку из ника — иначе штраф 72ч!</i></blockquote>",
         parse_mode=ParseMode.HTML,
     )
-    logging.info("[Bonus] Бонус %.2f начислен user_id=%d name=%s", BONUS_AMOUNT, user_id, safe_name)
 
 
-# ── Хендлеры ─────────────────────────────────────────────────────────────────
+# ── Хендлеры ─────────────────────────────────────────────────────
 
 @bonus_router.message(Command("bonus", "бонус"))
 async def cmd_bonus_slash(message: Message) -> None:
@@ -348,22 +285,16 @@ async def cmd_bonus_text(message: Message) -> None:
     await handle_bonus(message)
 
 
-# ── Воркер ───────────────────────────────────────────────────────────────────
+# ── Воркер (проверяет ник каждые 2ч) ─────────────────────────────
 
 async def _check_one_user(user_id: int) -> None:
     async with _watchdog_semaphore:
         try:
-            first_name, bio = await _fetch_user_info(user_id)
-            name_ok = _check_name(first_name)
-            bio_ok  = _check_bio(bio)
-
-            if not name_ok or not bio_ok:
+            first_name = await _fetch_first_name(user_id)
+            if not _check_name(first_name):
                 async with _user_locks[user_id]:
                     _apply_penalty(user_id)
-                logging.warning(
-                    "[Bonus] Watchdog user_id=%d убрал приписку (name=%s bio=%s)",
-                    user_id, name_ok, bio_ok,
-                )
+                logging.warning("[Bonus] Watchdog: user_id=%d убрал ник — штраф 72ч", user_id)
                 if _bot is not None:
                     try:
                         await _bot.send_message(
@@ -373,16 +304,16 @@ async def _check_one_user(user_id: int) -> None:
                                 "<tg-emoji emoji-id=\"" + EMOJI_WARN + "\">⚠️</tg-emoji>"
                                 " Приписка убрана!</b></blockquote>\n\n"
                                 "<blockquote>"
-                                "Вы убрали приписку из никнейма или bio.\n\n"
+                                "Вы убрали <code>@FesteryCas_bot</code> из никнейма.\n\n"
                                 "<tg-emoji emoji-id=\"" + EMOJI_CLOCK + "\">⏰</tg-emoji> "
                                 "Следующий бонус через <b>72 часа</b>.\n\n"
-                                "Верните приписку — и снова получайте бонус каждые 24 часа!"
+                                "Верните приписку — и снова получайте бонус каждые 24ч!"
                                 "</blockquote>"
                             ),
                             parse_mode=ParseMode.HTML,
                         )
                     except Exception as e:
-                        logging.warning("[Bonus] Не удалось уведомить user_id=%d: %s", user_id, str(e)[:200])
+                        logging.warning("[Bonus] Уведомление не доставлено user_id=%d: %s", user_id, str(e)[:200])
         except Exception as e:
             logging.error("[Bonus] Watchdog ошибка user_id=%d: %s", user_id, e)
 
