@@ -191,12 +191,19 @@ def _ensure_day(user_id: int, date: str, name: str = ""):
     """Гарантирует наличие записи для (user_id, date) в _stats."""
     if user_id not in _stats:
         _stats[user_id] = {}
+    
+    # Если записи за эту дату нет - создаём
     if date not in _stats[user_id]:
         _stats[user_id][date] = {
-            "turnover": 0.0, "wins": 0.0,
-            "deposits": 0.0, "withdrawals": 0.0,
+            "turnover": 0.0, 
+            "wins": 0.0,
+            "deposits": 0.0, 
+            "withdrawals": 0.0,
             "name": name or f"User {user_id}",
         }
+        logging.info(f"[Leaders] Создана новая запись для user_id={user_id}, date={date}")
+    
+    # Обновляем имя, если передано
     if name:
         _stats[user_id][date]["name"] = name
 
@@ -328,9 +335,11 @@ def record_withdrawal_stat(user_id: int, name: str, amount: float):
 def rollback_withdrawal_stat(user_id: int, amount: float):
     """Откатывает record_withdrawal_stat — вызывается если чек не был создан."""
     date = _today_str()
-    day  = _stats.get(user_id, {}).get(date)
-    if day is None:
+    if user_id not in _stats or date not in _stats[user_id]:
+        logging.warning(f"[Leaders] Откат невозможен: нет записи для user_id={user_id}, date={date}")
         return
+    
+    day = _stats[user_id][date]
     day["withdrawals"] = max(0.0, round(day["withdrawals"] - amount, 8))
     _save_stat_to_db(user_id, date)
     logging.info(f"[Leaders] Откат вывода в стате: user_id={user_id}, amount={amount}")
@@ -357,6 +366,8 @@ def get_top10(storage, leader_type: str, period: str) -> list:
     dates   = _dates_for_period(period)
     results = {}
 
+    logging.info(f"[Leaders] get_top10: type={leader_type}, period={period}, dates={dates}")
+    
     for uid, day_data in _stats.items():
         total = 0.0
         name  = f"User {uid}"
@@ -364,10 +375,13 @@ def get_top10(storage, leader_type: str, period: str) -> list:
             if d in day_data:
                 total += day_data[d].get(leader_type, 0.0)
                 name   = day_data[d].get("name", name)
+        
         if total > 0:
             results[uid] = {"user_id": uid, "name": name, "value": total}
+            logging.info(f"[Leaders] User {uid}: {leader_type}={total}")
 
     sorted_list = sorted(results.values(), key=lambda x: x["value"], reverse=True)
+    logging.info(f"[Leaders] Top 10 results: {sorted_list[:3] if sorted_list else []}")
     return sorted_list[:10]
 
 
