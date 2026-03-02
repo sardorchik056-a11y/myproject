@@ -7,12 +7,13 @@ import time
 import re as _re
 from datetime import datetime, timedelta
 from typing import Optional, Dict
-from dotenv import load_dotenv
 
 import aiohttp
 from aiogram import Router, F, Bot
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.enums import ParseMode
+
+from dotenv import load_dotenv
 
 # База данных
 try:
@@ -28,6 +29,21 @@ except ImportError:
     def db_set_balance(user_id, amount): pass
     def db_update_field(user_id, field, value): pass
     def db_get_user(user_id): return {}
+
+# ── Импорт функций лидеров на уровне модуля (избегаем циклических импортов) ──
+# Если leaders.py ещё не загружен или возникла ошибка — используем заглушки,
+# чтобы payments.py продолжал работать в любом случае.
+try:
+    from leaders import (
+        record_deposit_stat,
+        record_withdrawal_stat,
+        rollback_withdrawal_stat,
+    )
+except Exception as _leaders_import_err:
+    logging.warning(f"[Payments] Не удалось импортировать leaders: {_leaders_import_err}")
+    def record_deposit_stat(user_id, name, amount): pass
+    def record_withdrawal_stat(user_id, name, amount): pass
+    def rollback_withdrawal_stat(user_id, amount): pass
 
 load_dotenv()
 
@@ -393,6 +409,23 @@ class CryptoBotAPI:
 crypto_api = CryptoBotAPI(CRYPTO_BOT_TOKEN)
 
 
+# ========== ВСПОМОГАТЕЛЬНАЯ: получение имени пользователя ==========
+def _get_user_display_name(user_data: dict, user_id: int) -> str:
+    """
+    Возвращает отображаемое имя пользователя.
+    Приоритет: first_name (непустой) → username (непустой) → "User {id}"
+    Использует явную проверку на непустую строку вместо falsy-значения,
+    чтобы пустая строка "" не считалась допустимым именем.
+    """
+    first_name = (user_data.get('first_name') or "").strip()
+    if first_name:
+        return first_name
+    username = (user_data.get('username') or "").strip()
+    if username:
+        return username
+    return f"User {user_id}"
+
+
 # ========== ФОНОВАЯ ПРОВЕРКА ОПЛАТЫ ==========
 async def check_payment_task(invoice_id: str):
     try:
@@ -468,18 +501,10 @@ async def check_payment_task(invoice_id: str):
                         invoice['crypto_id']
                     ))
                     # Записываем в лидеры по дням (чтобы фильтр по периоду работал)
-                    try:
-                        from leaders import record_deposit_stat
-                        user_data = storage.get_user(invoice['user_id'])
-                        user_name = (
-                            user_data.get('first_name')
-                            or user_data.get('username')
-                            or f"User {invoice['user_id']}"
-                        )
-                        record_deposit_stat(invoice['user_id'], user_name, invoice['amount'])
-                        logging.info(f"[Leaders] Записан депозит для user_id={invoice['user_id']}, amount={invoice['amount']}")
-                    except Exception as _le:
-                        logging.error(f"[Leaders] record_deposit_stat error: {_le}")
+                    user_data = storage.get_user(invoice['user_id'])
+                    user_name = _get_user_display_name(user_data, invoice['user_id'])
+                    record_deposit_stat(invoice['user_id'], user_name, invoice['amount'])
+                    logging.info(f"[Leaders] Депозит через check_payment_task записан: user_id={invoice['user_id']}, amount={invoice['amount']}")
                 else:
                     logging.warning(
                         f"[{invoice_id}] ОПЛАЧЕН но зачисление отклонено (дюп) — "
@@ -694,12 +719,7 @@ async def _process_withdraw(message: Message, user_id: int):
         if not check or 'bot_check_url' not in check:
             # Чек не создан — полностью откатываем: баланс + total_withdrawals + лидеры
             storage.rollback_withdrawal(user_id, amount)
-            try:
-                from leaders import rollback_withdrawal_stat
-                rollback_withdrawal_stat(user_id, amount)
-                logging.info(f"[Leaders] Выполнен откат вывода для user_id={user_id}, amount={amount}")
-            except Exception as _le:
-                logging.error(f"[Leaders] rollback_withdrawal_stat error: {_le}")
+            rollback_withdrawal_stat(user_id, amount)
             await message.answer(
                 '<blockquote>❌ Ошибка создания чека! Попробуйте позже!</blockquote>',
                 parse_mode=ParseMode.HTML,
@@ -711,21 +731,11 @@ async def _process_withdraw(message: Message, user_id: int):
         asyncio.create_task(save_withdrawal(user_id, amount))
 
         # Записываем в лидеры по дням (чтобы фильтр по периоду работал)
-        try:
-            from leaders import record_withdrawal_stat
-            user_data = storage.get_user(user_id)
-            user_name = (
-                user_data.get('first_name')
-                or user_data.get('username')
-                or f"User {user_id}"
-            )
-            record_withdrawal_stat(user_id, user_name, amount)
-            logging.info(f"[Leaders] Записан вывод для user_id={user_id}, amount={amount}")
-        except Exception as _le:
-            logging.error(f"[Leaders] record_withdrawal_stat error: {_le}")
+        user_data = storage.get_user(user_id)
+        user_name = _get_user_display_name(user_data, user_id)
+        record_withdrawal_stat(user_id, user_name, amount)
 
-        # Логируем ссылку на чек — если Telegram не доставит сообщение,
-        # пользователь найдёт чек в CryptoBot (pin_to_user_id), а мы видим лог
+        # Логируем ссылку на чек
         logging.info(
             f"[WITHDRAW] Чек создан: user_id={user_id}, amount={amount}, "
             f"check_url={check['bot_check_url']}"
