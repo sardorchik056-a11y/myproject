@@ -390,7 +390,6 @@ class CryptoBotAPI:
 
 
 # ========== ИНИЦИАЛИЗАЦИЯ CRYPTOBOT API ==========
-# Используем токен из переменных окружения
 crypto_api = CryptoBotAPI(CRYPTO_BOT_TOKEN)
 
 
@@ -478,6 +477,7 @@ async def check_payment_task(invoice_id: str):
                             or f"User {invoice['user_id']}"
                         )
                         record_deposit_stat(invoice['user_id'], user_name, invoice['amount'])
+                        logging.info(f"[Leaders] Записан депозит для user_id={invoice['user_id']}, amount={invoice['amount']}")
                     except Exception as _le:
                         logging.error(f"[Leaders] record_deposit_stat error: {_le}")
                 else:
@@ -515,8 +515,6 @@ async def check_payment_task(invoice_id: str):
 
 
 # ========== ХЕНДЛЕР КОМАНДЫ ДЕП / DEP / DEPOSIT ==========
-# Формат: [/]деп 1.5 | dep 1.5 | deposit 2 | пополнить 3 | депозит 5
-# Лишний текст после числа → НЕ срабатывает (деп 10 хотел — игнор)
 _DEP_RE = _re.compile(
     r'^/?(?:деп|пополнить|депозит|dep|deposit)\s+(\d+(?:\.\d+)?)$',
     _re.IGNORECASE
@@ -681,9 +679,6 @@ async def _process_withdraw(message: Message, user_id: int):
                 return
 
             # ── Сначала резервируем (списываем) баланс, потом создаём чек ──────
-            # Если создать чек ДО списания — при await event loop переключится
-            # и баланс может измениться (игра), тогда record_withdrawal вернёт False,
-            # но чек уже уйдёт пользователю → бесплатные деньги.
             withdrawn = storage.record_withdrawal(user_id, amount)
             if not withdrawn:
                 logging.error(f"[WITHDRAW] record_withdrawal вернул False: user_id={user_id}, amount={amount}")
@@ -702,6 +697,7 @@ async def _process_withdraw(message: Message, user_id: int):
             try:
                 from leaders import rollback_withdrawal_stat
                 rollback_withdrawal_stat(user_id, amount)
+                logging.info(f"[Leaders] Выполнен откат вывода для user_id={user_id}, amount={amount}")
             except Exception as _le:
                 logging.error(f"[Leaders] rollback_withdrawal_stat error: {_le}")
             await message.answer(
@@ -724,6 +720,7 @@ async def _process_withdraw(message: Message, user_id: int):
                 or f"User {user_id}"
             )
             record_withdrawal_stat(user_id, user_name, amount)
+            logging.info(f"[Leaders] Записан вывод для user_id={user_id}, amount={amount}")
         except Exception as _le:
             logging.error(f"[Leaders] record_withdrawal_stat error: {_le}")
 
